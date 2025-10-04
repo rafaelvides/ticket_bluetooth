@@ -70,6 +70,22 @@ export default function App() {
     }
   };
 
+  const onComenzar = async () => {
+    try {
+      BluetoothPrinterModule.startBackgroundService()
+        .then((res: string) => {
+          console.log(res);
+        })
+        .catch((err: any) => {
+          console.error(err);
+        });
+
+      console.log("✅ Impresión bluetooth terminada");
+    } catch (err) {
+      console.log("❌ Error al imprimir por Bluetooth:", err);
+    }
+  };
+
   return (
     <SafeAreaView style={{ padding: 20 }}>
       <TextInput
@@ -80,12 +96,14 @@ export default function App() {
       />
       <Button title="Imprimir por Bluetooth" onPress={onPrintBluetooth} />
       <View style={{ marginBottom: 20 }} />
-      h
       <Button title="Connectar" onPress={coneccted} />
       <View style={{ marginBottom: 20 }} />
       <Button title="impr" onPress={imprimir} />
       <View style={{ marginBottom: 20 }} />
       <Button title="permisos" onPress={requestBluetoothPermission} />
+
+      <View style={{ marginBottom: 20 }} />
+      <Button title="comenzar" onPress={onComenzar} />
     </SafeAreaView>
   );
 }

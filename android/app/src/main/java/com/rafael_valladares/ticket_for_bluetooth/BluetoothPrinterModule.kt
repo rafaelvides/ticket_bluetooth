@@ -12,6 +12,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
+import android.content.Intent
 
 class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -202,6 +203,29 @@ private fun wrapColumnCPCL(text: String, maxChars: Int): List<String> {
     }
     if (line.isNotEmpty()) out.add(line)
     return out
+}
+
+
+@ReactMethod
+fun startBackgroundService(promise: Promise) {
+    try {
+        val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
+        reactApplicationContext.startService(intent)
+        promise.resolve("Servicio iniciado")
+    } catch (e: Exception) {
+        promise.reject("ERROR", e.message)
+    }
+}
+
+@ReactMethod
+fun stopBackgroundService(promise: Promise) {
+    try {
+        val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
+        reactApplicationContext.stopService(intent)
+        promise.resolve("Servicio detenido")
+    } catch (e: Exception) {
+        promise.reject("ERROR", e.message)
+    }
 }
 
 }
