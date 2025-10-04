@@ -14,6 +14,11 @@ import java.util.Locale
 import kotlin.math.max
 import android.content.Intent
 import java.nio.charset.Charset
+import android.graphics.Bitmap
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import android.graphics.Color
+import java.io.ByteArrayOutputStream
 
 private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
 private const val MARGIN_RIGHT = 30   // margen derecho
@@ -33,6 +38,7 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
                     promise.reject("BLUETOOTH_DISABLED", "Bluetooth no está activo")
                     return@Thread
                 }
+                val LINE_MARGIN = 5
 
                 val device: BluetoothDevice =
                     btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
@@ -50,9 +56,11 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
 
                 val empresa = "MI EMPRESA S.A. DE C.V."
                 val dte = "00000000000000000000"
+                val ambiente = "01"
                 val caja = "00000"
-                val fecha = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
-                val numControl = "000000000000000"
+                val fecha = "2025-10-03"
+                val numControl = "DTE-01-M001P001-000000000000004"
+                val codGen = "F020C26C-819F-4677-B388-4BB5C676D134"
 
                 val productos = listOf(
                     Triple("Galletas super extra largas con nombre enorme que no cabe", "1", "1.00"),
@@ -70,13 +78,16 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
 val AJUSTE = 2
 val MAX_PROD_CHARS_REAL = MAX_PROD_CHARS - AJUSTE
 val ESPACIO_ENTRE_PRODUCTOS = 16
-
+val BORDER_MARGIN_LEFT = 80     // empieza más adentro (antes 30)
+val BORDER_MARGIN_RIGHT = -250 
                 val body = StringBuilder()
 
                 // Encabezado
                 body.append("TEXT 7 0 $LEFT_X $y $empresa\n")
                 y += 40
-                body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
+                // body.append("LINE 20 $y ${PAGE_WIDTH} $y 2\n")
+                body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+
                 y += 20
 
                 // Datos fiscales
@@ -85,7 +96,8 @@ val ESPACIO_ENTRE_PRODUCTOS = 16
                 body.append("TEXT 7 0 $LEFT_X $y Fecha: $fecha\n"); y += LINE_H
                 body.append("TEXT 7 0 $LEFT_X $y Num Control DTE: $numControl\n"); y += (LINE_H + 4)
 
-                body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
+body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+                // body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
                 y += 20
 
                 // Tabla encabezado
@@ -93,9 +105,12 @@ val ESPACIO_ENTRE_PRODUCTOS = 16
                 body.append("TEXT 7 0 $QTY_X $y Cant\n")
                 body.append("TEXT 7 0 $TOTAL_X $y Total\n")
                 y += 42
-                val LINE_MARGIN = 5
-body.append("LINE ${LEFT_X - LINE_MARGIN} $y ${RIGHT_X + LINE_MARGIN} $y 2\n")
-                body.append("LINE 0 $y ${PAGE_WIDTH - 20} $y 2\n")
+
+body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+// body.append("LINE ${LEFT_X - LINE_MARGIN - 10} $y ${RIGHT_X + LINE_MARGIN + 80} $y 2\n")
+// body.append("LINE ${LEFT_X - LINE_MARGIN - 10} $y ${RIGHT_X + LINE_MARGIN + 80} $y 2\n")
+
+                // body.append("LINE 0 $y ${PAGE_WIDTH - 20} $y 2\n")
                 y += 17
 
                 // Filas
@@ -116,7 +131,6 @@ body.append("LINE ${LEFT_X - LINE_MARGIN} $y ${RIGHT_X + LINE_MARGIN} $y 2\n")
         y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
 
 }
-val TOTAL_X_ADJ = PAGE_WIDTH - 200 // 150px antes del borde derecho, ajustable
 
                 // // Línea final y total general
                 // body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
@@ -136,8 +150,9 @@ val vuelto = 0.25
 // =====================
 // Línea separadora
 // =====================
-body.append("LINE ${LEFT_X - LINE_MARGIN} $y ${RIGHT_X + LINE_MARGIN} $y 2\n")
+body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
 y += 16
+val TOTAL_X_ADJ = PAGE_WIDTH - 200 // 150px antes del borde derecho, ajustable
 
 // =====================
 // Función para alinear números
@@ -172,38 +187,97 @@ val vueltoTexto = formatMoneda(vuelto)
 val xVuelto = calcularNumeroX(vueltoTexto, PAGE_WIDTH)
 body.append("TEXT 7 0 $LEFT_X $y Vuelto:\n")
 body.append("TEXT 7 0 $xVuelto $y $vueltoTexto\n")
-y += 30
+y += 45
 
 // =====================
 // Código QR centrado
 // =====================
-val qrSize = 150
-val qrX = (PAGE_WIDTH - qrSize) / 2
-body.append("QRCODE $qrX $y M 2 U 5\n")
-body.append("MA,$numControl\n")
-body.append("ENDQR\n")
-y += qrSize + 10
 
+
+// val qrSize = 210
+// val qrX = (PAGE_WIDTH - qrSize) / 2
+// // val qrData = "https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$numControl&fechaEmi=$fecha"
+
+// // val qrBitmap = generarQR(qrData, qrSize)
+// // val qrBytes = bitmapToCPCLBytes(qrBitmap, qrX, y) // <-- nueva función (ver abajo)
+// // y += qrSize + 25
+
+// // val qrX = (PAGE_WIDTH - 210) / 2
+// body.append("B QR $qrX $y M 2 U 4\n")
+// body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fecha\n")
+// body.append("ENDQR\n")
+//  y += qrSize + 17
+
+
+val qrSize = 210
+
+// 🔹 Escala del QR: controla el tamaño real impreso (1–6)
+// U 4 → mediano, U 5 → grande
+val qrScale = 4
+
+// 🔹 Desplazamiento de compensación (depende del ancho del papel)
+val adjust = when (PAGE_WIDTH) {
+    in 550..600 -> 10     // impresora de 80 mm
+    in 400..520 -> -5     // impresora de 58 mm
+    else -> 0
+}
+
+// 🔹 Cálculo del centro real del QR
+val qrX = ((PAGE_WIDTH - qrSize) / 2) + 60
+
+// 🔹 Impresión del QR (modo CPCL nativo)
+body.append("B QR $qrX $y M 2 U $qrScale\n")
+body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fecha\n")
+body.append("ENDQR\n")
+
+// 🔹 Espacio inferior antes del texto
+y += (qrSize * (qrScale / 5.0)).toInt() + 25
+
+
+// y += 15
+val text1 = "Escanea el codigo QR para validar tu DTE"
+val text2 = "Powered by SeedCodeSV"
+val text1X = (PAGE_WIDTH / 2) - (text1.length * CHAR_WIDTH / 2)
+val text2X = (PAGE_WIDTH / 2) - (text2.length * CHAR_WIDTH / 2)
+body.append("TEXT 7 0 $text1X $y $text1\n")
+y += 25
+body.append("TEXT 7 0 $text2X $y $text2\n")
+y += 30
 // =====================
 // Texto debajo del QR centrado
 // =====================
-val text = "Powered by SeedCodeSV"
-val textX = (PAGE_WIDTH / 2) - (text.length * CHAR_WIDTH / 2)
-body.append("TEXT 7 0 $textX $y $text\n")
-y += 30
+// val text = "Powered by SeedCodeSV"
+// val textX = (PAGE_WIDTH / 2) - (text.length * CHAR_WIDTH / 2)
+// body.append("TEXT 7 0 $textX $y $text\n")
+// y += 30
 
 val pageHeight = y + 20
 
-val cpclCmd = buildString {
+// val cpclCmd = buildString {
+//     append("! 0 200 200 $pageHeight 1\n")
+//     append("PAGE-WIDTH $PAGE_WIDTH\n")
+//     append(body.toString())
+//     append("PRINT\n")
+// }
+
+
+val cpclHeader = buildString {
     append("! 0 200 200 $pageHeight 1\n")
     append("PAGE-WIDTH $PAGE_WIDTH\n")
-    append(body.toString())
-    append("PRINT\n")
+    append(body.toString()) // todo lo demás excepto el QR
 }
+outputStream.write(cpclHeader.toByteArray(Charsets.ISO_8859_1))
 
-Log.d("CPCL_CMD", cpclCmd)
-outputStream.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
+// escribir los bytes del QR directamente (sin convertir a string)
+// outputStream.write(qrBytes)
+
+// cierre final
+outputStream.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
 outputStream.flush()
+
+// // Log.d("CPCL_CMD", cpclCmd)
+// outputStream.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
+// outputStream.flush()
 promise.resolve("✅ Impresión completada")
             } catch (e: Exception) {
                 promise.reject("ERROR", e.message)
@@ -322,4 +396,86 @@ fun stopBackgroundService(promise: Promise) {
     }
 }
 
+}
+fun generarQR(data: String, size: Int): Bitmap {
+    val writer = QRCodeWriter()
+    val bitMatrix = writer.encode(data, BarcodeFormat.QR_CODE, size, size)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+    for (x in 0 until size) {
+        for (y in 0 until size) {
+            bitmap.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+        }
+    }
+    return bitmap
+}
+
+// Convertir Bitmap a comandos CPCL ("EG" = graphic image)
+fun bitmapToCPCL(bitmap: Bitmap, x: Int, y: Int): String {
+    val width = bitmap.width
+    val height = bitmap.height
+    val bytesPerRow = (width + 7) / 8
+
+    val sb = StringBuilder()
+    sb.append("EG $x $y $bytesPerRow $height ")
+    val imageBytes = ByteArray(bytesPerRow * height)
+
+    var index = 0
+    for (py in 0 until height) {
+        var bitIndex = 0
+        var currentByte = 0
+        for (px in 0 until width) {
+            val color = bitmap.getPixel(px, py)
+            val isBlack = Color.red(color) < 128 && Color.green(color) < 128 && Color.blue(color) < 128
+            currentByte = (currentByte shl 1) or if (isBlack) 1 else 0
+            bitIndex++
+            if (bitIndex == 8) {
+                imageBytes[index++] = currentByte.toByte()
+                bitIndex = 0
+                currentByte = 0
+            }
+        }
+        if (bitIndex > 0) {
+            currentByte = currentByte shl (8 - bitIndex)
+            imageBytes[index++] = currentByte.toByte()
+        }
+    }
+
+    sb.append(String(imageBytes, Charsets.ISO_8859_1))
+    sb.append("\n")
+    return sb.toString()
+}
+fun bitmapToCPCLBytes(bitmap: Bitmap, x: Int, y: Int): ByteArray {
+    val width = bitmap.width
+    val height = bitmap.height
+    val bytesPerRow = (width + 7) / 8
+    val data = ByteArrayOutputStream()
+
+    // encabezado del comando CPCL
+    val header = "EG $x $y $bytesPerRow $height "
+    data.write(header.toByteArray(Charsets.ISO_8859_1))
+
+    // cuerpo binario
+    var byteVal = 0
+    var bitCount = 0
+    for (row in 0 until height) {
+        for (col in 0 until width) {
+            val color = bitmap.getPixel(col, row)
+            val isBlack = Color.red(color) < 128 && Color.green(color) < 128 && Color.blue(color) < 128
+            byteVal = (byteVal shl 1) or if (isBlack) 1 else 0
+            bitCount++
+            if (bitCount == 8) {
+                data.write(byteVal)
+                bitCount = 0
+                byteVal = 0
+            }
+        }
+        if (bitCount > 0) {
+            data.write(byteVal shl (8 - bitCount))
+            bitCount = 0
+            byteVal = 0
+        }
+    }
+
+    data.write('\n'.code)
+    return data.toByteArray()
 }
