@@ -13,7 +13,10 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 import android.content.Intent
+import java.nio.charset.Charset
 
+private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
+private const val MARGIN_RIGHT = 30   // margen derecho
 class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
@@ -54,7 +57,8 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
                 val productos = listOf(
                     Triple("Galletas super extra largas con nombre enorme que no cabe", "1", "1.00"),
                     Triple("Coca Cola 1.5L", "2", "2.50"),
-                    Triple("Pan francés", "5", "2.25")
+                    Triple("Pan frances", "5", "2.25"),
+                    Triple("Pan frances", "5", "2.25"),
                 )
 
                 val PRODUCT_X = LEFT_X
@@ -62,6 +66,10 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
                 val TOTAL_X = 455
                 val LINE_H = 28
                 val MAX_PROD_CHARS = 24
+                val RIGHT_X = PAGE_WIDTH - LEFT_X
+val AJUSTE = 2
+val MAX_PROD_CHARS_REAL = MAX_PROD_CHARS - AJUSTE
+val ESPACIO_ENTRE_PRODUCTOS = 16
 
                 val body = StringBuilder()
 
@@ -78,47 +86,125 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
                 body.append("TEXT 7 0 $LEFT_X $y Num Control DTE: $numControl\n"); y += (LINE_H + 4)
 
                 body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
-                y += 12
+                y += 20
 
                 // Tabla encabezado
                 body.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
                 body.append("TEXT 7 0 $QTY_X $y Cant\n")
                 body.append("TEXT 7 0 $TOTAL_X $y Total\n")
-                y += 18
-                body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
-                y += 10
+                y += 42
+                val LINE_MARGIN = 5
+body.append("LINE ${LEFT_X - LINE_MARGIN} $y ${RIGHT_X + LINE_MARGIN} $y 2\n")
+                body.append("LINE 0 $y ${PAGE_WIDTH - 20} $y 2\n")
+                y += 17
 
                 // Filas
-                for ((nombre, qty, total) in productos) {
-                    val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
-                    prodLines.forEachIndexed { idx, line ->
-                        body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
-                    }
-                    body.append("TEXT 7 0 $QTY_X $y $qty\n")
-                    body.append("TEXT 7 0 $TOTAL_X $y $total\n")
-                    y += (prodLines.size * LINE_H) + 8
-                }
+             for ((nombre, qty, total) in productos) {
+    // wrap con límite ajustado para que no invada la columna QTY
+    val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS_REAL)
+    
+    prodLines.forEachIndexed { idx, line ->
+        body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+    }
 
-                // Línea final y total general
-                body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
-                y += 16
-                body.append("TEXT 7 0 $TOTAL_X $y 5.75\n")
-                y += 60
+    // cantidad y total en la primera línea del producto
+    body.append("TEXT 7 0 $QTY_X $y $qty\n")
+    body.append("TEXT 7 0 $TOTAL_X $y $total\n")
 
-                val pageHeight = max(800, y) // altura segura
+    // subimos Y según cuántas líneas ocupó el nombre
+    // y += (prodLines.size * LINE_H) + 8
+        y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
 
-                val cpclCmd = buildString {
-                    append("! 0 200 200 $pageHeight 1\n")
-                    append("PAGE-WIDTH $PAGE_WIDTH\n")
-                    append(body.toString())
-                    append("PRINT\n")
-                }
+}
+val TOTAL_X_ADJ = PAGE_WIDTH - 200 // 150px antes del borde derecho, ajustable
 
-                Log.d("CPCL_CMD", cpclCmd)
-                outputStream.write(cpclCmd.toByteArray(Charsets.UTF_8))
-                outputStream.flush()
+                // // Línea final y total general
+                // body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
+                // y += 16
+                // body.append("TEXT 7 0 $TOTAL_X $y 5.75\n")
+                // y += 60
+val subTotal = 5.00
+val total = 5.75
+val vuelto = 0.25
 
-                promise.resolve("✅ Impresión completada")
+// =====================
+// Constantes de alineación
+// =====================
+// val CHAR_WIDTH = 7      // ancho aprox por carácter en la fuente CPCL 7
+// val MARGIN_RIGHT = 20   // margen derecho
+
+// =====================
+// Línea separadora
+// =====================
+body.append("LINE ${LEFT_X - LINE_MARGIN} $y ${RIGHT_X + LINE_MARGIN} $y 2\n")
+y += 16
+
+// =====================
+// Función para alinear números
+// =====================
+fun calcularNumeroX(numero: String, pageWidth: Int): Int {
+    val longitud = numero.length
+    return pageWidth - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
+}
+
+// =====================
+// Subtotal
+// =====================
+val subtotalTexto = formatMoneda(subTotal)
+val xSubtotal = calcularNumeroX(subtotalTexto, PAGE_WIDTH)
+body.append("TEXT 7 0 $LEFT_X $y Subtotal:\n")
+body.append("TEXT 7 0 $xSubtotal $y $subtotalTexto\n")
+y += LINE_H
+
+// =====================
+// Total
+// =====================
+val totalTexto = formatMoneda(total)
+val xTotal = calcularNumeroX(totalTexto, PAGE_WIDTH)
+body.append("TEXT 7 0 $LEFT_X $y Total:\n")
+body.append("TEXT 7 0 $xTotal $y $totalTexto\n")
+y += LINE_H
+
+// =====================
+// Vuelto
+// =====================
+val vueltoTexto = formatMoneda(vuelto)
+val xVuelto = calcularNumeroX(vueltoTexto, PAGE_WIDTH)
+body.append("TEXT 7 0 $LEFT_X $y Vuelto:\n")
+body.append("TEXT 7 0 $xVuelto $y $vueltoTexto\n")
+y += 30
+
+// =====================
+// Código QR centrado
+// =====================
+val qrSize = 150
+val qrX = (PAGE_WIDTH - qrSize) / 2
+body.append("QRCODE $qrX $y M 2 U 5\n")
+body.append("MA,$numControl\n")
+body.append("ENDQR\n")
+y += qrSize + 10
+
+// =====================
+// Texto debajo del QR centrado
+// =====================
+val text = "Powered by SeedCodeSV"
+val textX = (PAGE_WIDTH / 2) - (text.length * CHAR_WIDTH / 2)
+body.append("TEXT 7 0 $textX $y $text\n")
+y += 30
+
+val pageHeight = y + 20
+
+val cpclCmd = buildString {
+    append("! 0 200 200 $pageHeight 1\n")
+    append("PAGE-WIDTH $PAGE_WIDTH\n")
+    append(body.toString())
+    append("PRINT\n")
+}
+
+Log.d("CPCL_CMD", cpclCmd)
+outputStream.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
+outputStream.flush()
+promise.resolve("✅ Impresión completada")
             } catch (e: Exception) {
                 promise.reject("ERROR", e.message)
                 Log.e("BluetoothPrinter", "Error: ${e.message}", e)
@@ -129,6 +215,14 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
         }.start()
     }
 
+fun formatMoneda(valor: Double): String {
+    return "$" + String.format("%.2f", valor)
+}
+
+fun calcularNumeroX(texto: String, pageWidth: Int): Int {
+    val longitud = texto.length
+    return pageWidth - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
+}
 
 fun wrapTextCPCL(
     text: String,

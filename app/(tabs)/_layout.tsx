@@ -1,13 +1,37 @@
 import { Tabs } from 'expo-router';
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
+import { createSocketCutom } from '@/hooks/socket';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+
+  const socket = createSocketCutom();
+
+  const connect = useCallback(() => {
+    socket.on("connect", () => {
+      console.log("first")
+    });
+  }, [socket]);
+
+  const disconnect = useCallback(() => {
+    socket.on("disconnect", () => {
+      console.log("cn")
+    });
+  }, [socket]);
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      console.log("d3w")
+      disconnect();
+    };
+  }, []);
 
   return (
     <Tabs

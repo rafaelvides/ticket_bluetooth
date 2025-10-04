@@ -205,7 +205,7 @@ override fun onDestroy() {
             query = "transmitterId=52" // 👈 ajusta con tu valor real
         }
 
-        socketRed = IO.socket("ws://192.168.0.26:9000/sales-gateway", opts)
+        socketRed = IO.socket("ws://192.168.1.64:3000/sales-gateway", opts)
 
         socketRed?.on(Socket.EVENT_CONNECT) {
             Log.d("PrinterService", "✅ Socket conectado")
@@ -232,6 +232,8 @@ override fun onDestroy() {
 }
 
    private fun printTicketInBackgroundSocket(payload: String) {
+            Log.d("PrinterService", "📩 Ticket recibido: $payload")
+
     try {
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
         val device: BluetoothDevice =
