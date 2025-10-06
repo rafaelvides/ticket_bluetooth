@@ -31,7 +31,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 }
 expoAutolinking.useExpoModules()
 
-rootProject.name = 'ticket_for_bluetooth'
+rootProject.name = 'SeedCode-Print'
 
 expoAutolinking.useExpoVersionCatalog()
 

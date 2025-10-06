@@ -221,7 +221,7 @@ override fun onDestroy() {
             query = "transmitterId=52" // 👈 ajusta con tu valor real
         }
 
-        socketRed = IO.socket("ws://192.168.0.26:9000/sales-gateway", opts)
+        socketRed = IO.socket("ws://192.168.1.64:3000/sales-gateway", opts)
 
         socketRed?.on(Socket.EVENT_CONNECT) {
             Log.d("PrinterService", "✅ Socket conectado")
@@ -523,9 +523,8 @@ val cpclCmd = buildString {
 // escribir los bytes del QR directamente (sin convertir a string)
 // outputStream.write(qrBytes)
 
-// cierre final
-// outputStream?.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
-// outputStream?.flush()
+outputStream?.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
+outputStream?.flush()
 
 outputStream?.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
 outputStream?.flush()
@@ -570,17 +569,6 @@ private suspend fun printTicketOnce(payload: String) {
         if (localOutput == null) throw Exception("No se pudo abrir flujo de salida")
 
          val json = JSONObject(payload)
-
-        val empresa1 = json.optString("branchName", "EMPRESA DESCONOCIDA")
-        val dte1 = json.optString("generationCode", "SIN-DTE")
-        val caja1 = json.optString("box", "0")
-        val fecha1 = "${json.optString("date")} ${json.optString("time")}"
-        val numControl1 = json.optString("controlNumber", "SIN-CONTROL")
-        val selloRecibido1 = json.optString("selloRecibido", "-")
-        val cliente1 = json.optString("customer", "CONSUMIDOR FINAL")
-        val empleado1 = json.optString("employeeName", "N/A")
-        val total1 = json.optDouble("total", 0.0)
-
         // val productos1 = mutableListOf<TicketProduct>()
         // val detailsArray = json.optJSONArray("details") ?: JSONArray()
         // for (i in 0 until detailsArray.length()) {
@@ -601,22 +589,38 @@ private suspend fun printTicketOnce(payload: String) {
                 var y = 25
 
                 val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
-                val dte = json.optString("generationCode", "SIN-DTE")
+                val dte = json.optString("typeDte", "SIN-DTE")
                 val ambiente = "01"
                 val caja = json.optString("box", "0")
                 val fecha = "${json.optString("date")} ${json.optString("time")}"
+                val fechaQR = "${json.optString("date")}"
                 val numControl = json.optString("controlNumber", "SIN-CONTROL")
                 val codGen = json.optString("selloRecibido", "-")
                 val cliente = json.optString("customer", "CONSUMIDOR FINAL")
                 val empleado = json.optString("employeeName", "N/A")
                 val total = json.optDouble("total", 0.0)
 
-                val productos = listOf(
-                    Triple("Galletas super extra largas con nombre enorme que no cabe", "1", "1.00"),
-                    Triple("Coca Cola 1.5L", "2", "2.50"),
-                    Triple("Pan frances", "5", "2.25"),
-                    Triple("Pan frances", "5", "2.25"),
-                )
+                // val productos = listOf(
+                //     Triple("Galletas super extra largas con nombre enorme que no cabe", "1", "1.00"),
+                //     Triple("Coca Cola 1.5L", "2", "2.50"),
+                //     Triple("Pan frances", "5", "2.25"),
+                //     Triple("Pan frances", "5", "2.25"),
+                // )
+
+val detailsArray = json.getJSONArray("details")
+
+val productos = mutableListOf<Triple<String, String, String>>()
+
+for (i in 0 until detailsArray.length()) {
+    val item = detailsArray.getJSONObject(i)
+    val nombre = item.getString("name")
+    val cantidad = item.getInt("quantity").toString()
+    val totalUnit = item.getDouble("totalUnit")
+    val totalStr = String.format("%.2f", totalUnit) // 🔸 formatear a 2 decimales
+
+    productos.add(Triple(nombre, cantidad, totalStr))
+}
+
 
                 val PRODUCT_X = LEFT_X
                 val QTY_X = 370
@@ -643,7 +647,27 @@ val BORDER_MARGIN_RIGHT = -250
                 body.append("TEXT 7 0 $LEFT_X $y DTE: $dte\n"); y += LINE_H
                 body.append("TEXT 7 0 $LEFT_X $y Caja: $caja\n"); y += LINE_H
                 body.append("TEXT 7 0 $LEFT_X $y Fecha: $fecha\n"); y += LINE_H
-                body.append("TEXT 7 0 $LEFT_X $y Num Control DTE: $numControl\n"); y += (LINE_H + 4)
+                // body.append("TEXT 7 0 $LEFT_X $y Cliente: $cliente\n"); y += (LINE_H + 4)
+                // body.append("TEXT 7 0 $LEFT_X $y Empleado: $empleado\n"); y += (LINE_H + 4)
+
+                val textoCliente = "Cliente: $cliente"
+val lineasCliente = wrapTextCPCL(textoCliente, 32) // Ajusta 32 al ancho real de tu papel
+for (linea in lineasCliente) {
+    body.append("TEXT 7 0 $LEFT_X $y $linea\n")
+    y += LINE_H
+}
+y += 4 // espacio extra entre secciones
+
+// 🔹 Empleado
+val textoEmpleado = "Empleado: $empleado"
+val lineasEmpleado = wrapTextCPCL(textoEmpleado, 32)
+for (linea in lineasEmpleado) {
+    body.append("TEXT 7 0 $LEFT_X $y $linea\n")
+    y += LINE_H
+}
+y += 4
+
+
                 val textoNumControl = "Num Control DTE: $numControl"
 val lineasNumControl = wrapTextCPCL(textoNumControl, 32) // 🔹 ajusta 32 según ancho del papel
 for (linea in lineasNumControl) {
@@ -785,7 +809,7 @@ val qrX = ((PAGE_WIDTH - qrSize) / 2) + 60
 
 // 🔹 Impresión del QR (modo CPCL nativo)
 body.append("B QR $qrX $y M 2 U $qrScale\n")
-body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fecha\n")
+body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
 body.append("ENDQR\n")
 
 // 🔹 Espacio inferior antes del texto
@@ -834,10 +858,10 @@ val cpclCmd = buildString {
 // outputStream?.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
 // outputStream?.flush()
 
-outputStream?.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
-outputStream?.flush()
-        // localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
-        // localOutput.flush()
+// outputStream?.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
+// outputStream?.flush()
+        localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
+        localOutput.flush()
         Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
 
     } catch (e: Exception) {
