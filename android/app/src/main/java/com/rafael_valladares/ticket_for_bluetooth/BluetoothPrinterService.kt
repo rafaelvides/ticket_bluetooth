@@ -97,6 +97,15 @@ private var ioSocket: Socket? = null                 // 👈 Socket.IO
 
     private fun printTicketInBackground() {
         try {
+
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+            return
+        }
+    }
             val btAdapter = BluetoothAdapter.getDefaultAdapter()
             val device: BluetoothDevice =
                 btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
@@ -268,6 +277,14 @@ private suspend fun closeSafe() {
 private fun printTicketInBackgroundSocket(payload: String) {
      serviceScope.launch {
         try {
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+            return@launch
+        }
+    }
                 Log.d("PrinterService", "entro la peticion")
 
                  closeSafe()
@@ -551,6 +568,14 @@ private suspend fun printTicketOnce(payload: String) {
     var localOutput: OutputStream? = null
 
     try {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+            return
+        }
+    }
                 val dbHelper = PrinterDatabaseHelper(applicationContext)
                     val printerInfo = dbHelper.getLastPrinter()
             ?: throw Exception("No hay información de impresora guardada")
@@ -558,7 +583,12 @@ private suspend fun printTicketOnce(payload: String) {
         val address = printerInfo["address_ip"] as? String
             ?: throw Exception("La impresora no tiene dirección registrada")
 
-        val currentTicket = printerInfo["ticket"] as Int
+        // val currentTicket = printerInfo["ticket"] as Int
+        val currentTicket = when(val ticket = printerInfo["ticket"]) {
+    is Int -> ticket           // ya es Int
+    is String -> ticket.toIntOrNull() ?: 0   // String a Int, fallback a 0 si no se puede
+    else -> 0
+}
         val printerId = printerInfo["id"] as Int
 
         Log.d("PrinterService", "🟢 Iniciando impresión...")
@@ -606,7 +636,7 @@ private suspend fun printTicketOnce(payload: String) {
                 val fecha = "${json.optString("date")} ${json.optString("time")}"
                 val fechaQR = "${json.optString("date")}"
                 val numControl = json.optString("controlNumber", "SIN-CONTROL")
-                val codGen = json.optString("selloRecibido", "-")
+                val codGen = json.optString("generationCode", "-")
                 val cliente = json.optString("customer", "CONSUMIDOR FINAL")
                 val empleado = json.optString("employeeName", "N/A")
                 val total = json.optDouble("total", 0.0)
@@ -801,11 +831,11 @@ y += 45
 //  y += qrSize + 17
 
 
-val qrSize = 210
+val qrSize = 205
 
 // 🔹 Escala del QR: controla el tamaño real impreso (1–6)
 // U 4 → mediano, U 5 → grande
-val qrScale = 4
+val qrScale = 4.5
 
 // 🔹 Desplazamiento de compensación (depende del ancho del papel)
 val adjust = when (PAGE_WIDTH) {
@@ -819,7 +849,7 @@ val qrX = ((PAGE_WIDTH - qrSize) / 2) + 60
                 Log.d("PrinterService", "qr")
 
 // 🔹 Impresión del QR (modo CPCL nativo)
-body.append("B QR $qrX $y M 2 U $qrScale\n")
+body.append("B QR $qrX $y M 1 U $qrScale\n")
 body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
 body.append("ENDQR\n")
 

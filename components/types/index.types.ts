@@ -1,7 +1,6 @@
 export interface IPrinterStatus {
-  battery: number;
-  connection: "";
-  model: "";
-  paper: boolean;
-  status: "";
+  model: string,
+  name: string,
+  ticket: string,
+  address_ip: string,
 }

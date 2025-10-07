@@ -20,7 +20,9 @@ import com.google.zxing.qrcode.QRCodeWriter
 import android.graphics.Color
 import java.io.ByteArrayOutputStream
 
-
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 
 import android.Manifest
 import android.app.Activity
@@ -29,7 +31,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-
+import android.os.Handler
+import android.os.Looper
 
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -59,13 +62,17 @@ class BluetoothPrinterModule(reactContext: ReactApplicationContext) :
                 }
                 val LINE_MARGIN = 5
 
-                val device: BluetoothDevice =
-                    btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
-                        ?: throw Exception("Impresora no emparejada")
+                // val device: BluetoothDevice =
+                //     btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
+                //         ?: throw Exception("Impresora no emparejada")
 
-                val uuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-                socket = device.createInsecureRfcommSocketToServiceRecord(uuid) // inseguro
-                socket.connect()
+                         val device = btAdapter.bondedDevices.firstOrNull {
+            it.address == "66:32:64:9A:65:3F"
+        } ?: throw Exception("Impresora no emparejada")
+
+        val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        socket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+        socket.connect()
                 outputStream = socket.outputStream
 
                 // ---------- CONFIGURACIÓN ----------
@@ -280,20 +287,23 @@ val pageHeight = y + 20
 // }
 
 
-val cpclHeader = buildString {
+val cpclCmd = buildString {
     append("! 0 200 200 $pageHeight 1\n")
     append("PAGE-WIDTH $PAGE_WIDTH\n")
-    append(body.toString()) // todo lo demás excepto el QR
+    append(body.toString())
+    append("PRINT\n")
 }
-outputStream.write(cpclHeader.toByteArray(Charsets.ISO_8859_1))
+
+// outputStream.write(cpclHeader.toByteArray(Charsets.ISO_8859_1))
 
 // escribir los bytes del QR directamente (sin convertir a string)
 // outputStream.write(qrBytes)
 
 // cierre final
-outputStream.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
-outputStream.flush()
-
+// outputStream.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
+// outputStream.flush()
+     outputStream.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
+        outputStream.flush()
 // // Log.d("CPCL_CMD", cpclCmd)
 // outputStream.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
 // outputStream.flush()
@@ -393,6 +403,39 @@ private fun wrapColumnCPCL(text: String, maxChars: Int): List<String> {
 }
 
 
+private var bluetoothStateReceiver: BroadcastReceiver? = null
+
+@ReactMethod
+fun startBluetoothStateListener() {
+    val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+    bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val state = intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+            if (state == BluetoothAdapter.STATE_ON) {
+                sendEvent("BluetoothStateChanged", true)
+            } else if (state == BluetoothAdapter.STATE_OFF) {
+                sendEvent("BluetoothStateChanged", false)
+            }
+        }
+    }
+    reactApplicationContext.registerReceiver(bluetoothStateReceiver, filter)
+}
+
+@ReactMethod
+fun stopBluetoothStateListener() {
+   bluetoothStateReceiver?.let { receiver ->
+    reactApplicationContext.unregisterReceiver(receiver)
+}
+    bluetoothStateReceiver = null
+}
+
+private fun sendEvent(eventName: String, data: Boolean) {
+    reactApplicationContext
+        .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(eventName, data)
+}
+
+
 @ReactMethod
 fun startBackgroundService( 
     model: String,
@@ -459,40 +502,37 @@ fun getAllPrinterRecords(promise: Promise) {
 fun getPrinterFullInfo(promise: Promise) {
     Thread {
         var socket: BluetoothSocket? = null
-      val btAdapter = BluetoothAdapter.getDefaultAdapter()
-if (btAdapter == null) {
-    promise.reject("NO_BLUETOOTH", "Este dispositivo no tiene Bluetooth")
-    return@Thread
-}
-
-if (!btAdapter.isEnabled) {
-    val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    reactApplicationContext.startActivity(intent)
-    promise.reject("BLUETOOTH_DISABLED", "El Bluetooth está apagado. Se abrió la configuración.")
-    return@Thread
-}
         try {
             val btAdapter = BluetoothAdapter.getDefaultAdapter()
-            if (btAdapter == null || !btAdapter.isEnabled) {
-                promise.reject("BLUETOOTH_DISABLED", "Bluetooth no está activo")
+            if (btAdapter == null) {
+                promise.reject("NO_BLUETOOTH", "Este dispositivo no tiene Bluetooth")
                 return@Thread
             }
 
-            // 1️⃣ Conectar a la impresora por MAC
+            if (!btAdapter.isEnabled) {
+                // Abrir configuración de Bluetooth en UI thread
+                Handler(Looper.getMainLooper()).post {
+                    val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    reactApplicationContext.startActivity(intent)
+                }
+                promise.reject("BLUETOOTH_DISABLED", "El Bluetooth está apagado. Se abrió la configuración.")
+                return@Thread
+            }
+
+            // Buscar la impresora emparejada por MAC
             val device: BluetoothDevice =
                 btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
                     ?: throw Exception("Impresora no emparejada")
 
             val uuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            socket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+            // Conexión segura
+            socket = device.createRfcommSocketToServiceRecord(uuid)
             socket.connect()
 
             val outputStream = socket.outputStream
             val inputStream = socket.inputStream
 
-            // 2️⃣ Comando para pedir estado de la impresora
-            // ESC/POS estándar: DLE EOT n (n = 1 batería, 2 papel, 3 estado general)
             val commands = listOf(
                 byteArrayOf(0x10, 0x04, 0x01), // batería
                 byteArrayOf(0x10, 0x04, 0x02), // papel
@@ -504,26 +544,44 @@ if (!btAdapter.isEnabled) {
             for (cmd in commands) {
                 outputStream.write(cmd)
                 outputStream.flush()
-                Thread.sleep(200) // dar tiempo a la impresora de responder
 
+                // Leer respuesta con timeout seguro
                 val buffer = ByteArray(256)
-                val read = inputStream.read(buffer)
+                val start = System.currentTimeMillis()
+                var read = 0
+                while (System.currentTimeMillis() - start < 2000 && read <= 0) { // 2 segundos max
+                    val available = inputStream.available()
+                    if (available > 0) {
+                        read = inputStream.read(buffer, 0, available)
+                    } else {
+                        Thread.sleep(50)
+                    }
+                }
+
                 if (read > 0) {
                     val resp = buffer.copyOf(read)
                     when (cmd[2].toInt()) {
-                        0x01 -> info.putInt("battery", resp[0].toInt() and 0xFF) // valor real
+                        0x01 -> info.putInt("battery", resp[0].toInt() and 0xFF)
                         0x02 -> info.putBoolean("paper", (resp[0].toInt() and 0x01) != 0)
                         0x03 -> {
-                            info.putString("status", "OK") // parsea si quieres más detalle
-                            info.putString("model", "MP806L") // si el firmware envía modelo, parsear
+                            info.putString("status", "OK")
+                            info.putString("model", "MP806L")
+                        }
+                    }
+                } else {
+                    // Si no hay respuesta, marcar como desconectado
+                    when (cmd[2].toInt()) {
+                        0x01 -> info.putInt("battery", -1)
+                        0x02 -> info.putBoolean("paper", false)
+                        0x03 -> {
+                            info.putString("status", "No response")
+                            info.putString("model", "Unknown")
                         }
                     }
                 }
             }
 
-            // 3️⃣ Conexión
             info.putString("connection", if (socket.isConnected) "Connected" else "Disconnected")
-
             promise.resolve(info)
 
         } catch (e: Exception) {
