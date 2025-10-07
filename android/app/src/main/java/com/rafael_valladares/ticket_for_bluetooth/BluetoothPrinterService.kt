@@ -26,6 +26,7 @@ import org.json.JSONArray
 import kotlinx.coroutines.*
 import android.content.pm.PackageManager  // 👈 AÑADE ESTA LÍNEA
 import java.nio.charset.Charset
+import com.rafael_valladares.ticket_for_bluetooth.PrinterDatabaseHelper
 
 private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
 private const val MARGIN_RIGHT = 30   // margen derecho
@@ -550,11 +551,21 @@ private suspend fun printTicketOnce(payload: String) {
     var localOutput: OutputStream? = null
 
     try {
+                val dbHelper = PrinterDatabaseHelper(applicationContext)
+                    val printerInfo = dbHelper.getLastPrinter()
+            ?: throw Exception("No hay información de impresora guardada")
+
+        val address = printerInfo["address_ip"] as? String
+            ?: throw Exception("La impresora no tiene dirección registrada")
+
+        val currentTicket = printerInfo["ticket"] as Int
+        val printerId = printerInfo["id"] as Int
+
         Log.d("PrinterService", "🟢 Iniciando impresión...")
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
 
         val device = btAdapter.bondedDevices.firstOrNull {
-            it.address == "66:32:64:9A:65:3F"
+            it.address == address
         } ?: throw Exception("Impresora no emparejada")
 
         val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -863,6 +874,7 @@ val cpclCmd = buildString {
         localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
         localOutput.flush()
         Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
+        val newTicket = dbHelper.incrementTicket(printerId)
 
     } catch (e: Exception) {
         Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)

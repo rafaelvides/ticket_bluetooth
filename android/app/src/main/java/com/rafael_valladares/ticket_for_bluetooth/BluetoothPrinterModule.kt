@@ -21,12 +21,23 @@ import android.graphics.Color
 import java.io.ByteArrayOutputStream
 
 
+
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+
+
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.WritableMap
+import com.rafael_valladares.ticket_for_bluetooth.PrinterDatabaseHelper
 
 private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
 private const val MARGIN_RIGHT = 30   // margen derecho
@@ -383,10 +394,23 @@ private fun wrapColumnCPCL(text: String, maxChars: Int): List<String> {
 
 
 @ReactMethod
-fun startBackgroundService(promise: Promise) {
+fun startBackgroundService( 
+    model: String,
+    name: String,
+    ticket: String,
+    address_ip: String,
+    promise: Promise) {
     try {
         val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
         reactApplicationContext.startService(intent)
+
+          val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        dbHelper.insertPrinterInfo(
+            model = model,
+            name = name,
+            ticket = ticket,
+            address_ip = address_ip,
+        )
         promise.resolve("Servicio iniciado")
     } catch (e: Exception) {
         promise.reject("ERROR", e.message)
@@ -398,15 +422,56 @@ fun stopBackgroundService(promise: Promise) {
     try {
         val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
         reactApplicationContext.stopService(intent)
+
+         // 2️⃣ Eliminamos todos los registros de la tabla 'printer'
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        val db = dbHelper.writableDatabase
+        val deletedRows = db.delete("printer", null, null)
+        db.close()
         promise.resolve("Servicio detenido")
     } catch (e: Exception) {
         promise.reject("ERROR", e.message)
     }
 }
 @ReactMethod
+fun getAllPrinterRecords(promise: Promise) {
+    try {
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        val records = dbHelper.getAllPrinterDetails()  // solo una versión existe
+
+        val array = Arguments.createArray()
+        for (rec in records) {
+            val map = Arguments.createMap()
+            map.putInt("id", rec["id"] as Int)
+            map.putString("model", rec["model"] as String)
+            map.putString("name", rec["name"] as String)
+            map.putString("address_ip", rec["address_ip"] as String)
+            map.putInt("ticket", rec["ticket"] as Int)
+            array.pushMap(map)
+        }
+
+        promise.resolve(array)
+    } catch (e: Exception) {
+        promise.reject("DB_ERROR", e.message, e)
+    }
+}
+@ReactMethod
 fun getPrinterFullInfo(promise: Promise) {
     Thread {
         var socket: BluetoothSocket? = null
+      val btAdapter = BluetoothAdapter.getDefaultAdapter()
+if (btAdapter == null) {
+    promise.reject("NO_BLUETOOTH", "Este dispositivo no tiene Bluetooth")
+    return@Thread
+}
+
+if (!btAdapter.isEnabled) {
+    val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    reactApplicationContext.startActivity(intent)
+    promise.reject("BLUETOOTH_DISABLED", "El Bluetooth está apagado. Se abrió la configuración.")
+    return@Thread
+}
         try {
             val btAdapter = BluetoothAdapter.getDefaultAdapter()
             if (btAdapter == null || !btAdapter.isEnabled) {
@@ -468,6 +533,122 @@ fun getPrinterFullInfo(promise: Promise) {
         }
     }.start()
 }
+
+@ReactMethod
+fun checkBluetoothStatus(promise: Promise) {
+    try {
+        val btAdapter = BluetoothAdapter.getDefaultAdapter()
+        if (btAdapter == null) {
+            promise.reject("NO_BLUETOOTH", "Este dispositivo no tiene Bluetooth")
+            return
+        }
+
+        if (!btAdapter.isEnabled) {
+            promise.reject("BLUETOOTH_DISABLED", "El Bluetooth está apagado. Por favor, actívalo.")
+            return
+        }
+
+        val activity = reactApplicationContext.currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No hay actividad activa para verificar permisos")
+            return
+        }
+
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT
+            )
+        } else {
+            arrayOf(
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN
+            )
+        }
+
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            promise.reject("NO_PERMISSIONS", "Faltan permisos de Bluetooth")
+            return
+        }
+
+        promise.resolve("✅ Bluetooth disponible, encendido y con permisos")
+    } catch (e: Exception) {
+        promise.reject("BT_CHECK_ERROR", e.message)
+    }
+}
+
+    @ReactMethod
+    fun requestBluetoothPermissions(promise: Promise) {
+        try {
+           val activity: Activity? = reactApplicationContext.currentActivity
+if (activity == null) {
+    promise.reject("NO_ACTIVITY", "No hay actividad activa para abrir el diálogo.")
+    return
+}
+            val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE
+                )
+            } else {
+                arrayOf(
+                    Manifest.permission.BLUETOOTH,
+                    Manifest.permission.BLUETOOTH_ADMIN
+                )
+            }
+
+            val missing = permissions.filter {
+                ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
+            }
+
+            if (missing.isEmpty()) {
+                // ✅ Ya tiene permisos
+                promise.resolve("Permisos de Bluetooth ya otorgados")
+            } else {
+                // 🔹 Pedir permisos
+                ActivityCompat.requestPermissions(activity, missing.toTypedArray(), 1001)
+                promise.resolve("Permisos solicitados al usuario")
+            }
+        } catch (e: Exception) {
+            promise.reject("PERMISSION_ERROR", e.message, e)
+        }
+    }
+
+    // ✅ Abrir configuración Bluetooth del sistema
+    @ReactMethod
+    fun openBluetoothSettings(promise: Promise) {
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(intent)
+            promise.resolve("Configuración de Bluetooth abierta")
+        } catch (e: Exception) {
+            promise.reject("SETTINGS_ERROR", e.message, e)
+        }
+    }
+
+    // ✅ Mostrar diálogo nativo para encender Bluetooth
+    @ReactMethod
+    fun requestEnableBluetooth(promise: Promise) {
+        try {
+          val activity: Activity? = reactApplicationContext.currentActivity
+if (activity == null) {
+    promise.reject("NO_ACTIVITY", "No hay actividad activa para abrir el diálogo.")
+    return
+}
+
+            val intent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            activity.startActivityForResult(intent, 1002)
+            promise.resolve("Mostrando diálogo para encender Bluetooth")
+        } catch (e: Exception) {
+            promise.reject("ENABLE_ERROR", e.message, e)
+        }
+    }
 
 
 }
