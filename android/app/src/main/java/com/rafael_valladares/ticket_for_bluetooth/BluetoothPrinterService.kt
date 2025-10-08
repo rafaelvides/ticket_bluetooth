@@ -27,6 +27,7 @@ import kotlinx.coroutines.*
 import android.content.pm.PackageManager  // 👈 AÑADE ESTA LÍNEA
 import java.nio.charset.Charset
 import com.rafael_valladares.ticket_for_bluetooth.PrinterDatabaseHelper
+import java.io.IOException
 
 private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
 private const val MARGIN_RIGHT = 30   // margen derecho
@@ -118,7 +119,7 @@ private var ioSocket: Socket? = null                 // 👈 Socket.IO
             outputStream = socket?.outputStream
 
             // 👇 Ticket igual al de tu módulo
-            val PAGE_WIDTH = 515
+            val PAGE_WIDTH = 415
             val LEFT_X = 85
             var y = 25
 
@@ -231,7 +232,7 @@ override fun onDestroy() {
             query = "transmitterId=52" // 👈 ajusta con tu valor real
         }
 
-        socketRed = IO.socket("ws://192.168.1.64:3000/sales-gateway", opts)
+        socketRed = IO.socket("wss://facturacion-testmt-api.erpseedcodeone.online/sales-gateway", opts)
 
         socketRed?.on(Socket.EVENT_CONNECT) {
             Log.d("PrinterService", "✅ Socket conectado")
@@ -568,354 +569,235 @@ private suspend fun printTicketOnce(payload: String) {
     var localOutput: OutputStream? = null
 
     try {
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
-            return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+                return
+            }
         }
-    }
-                val dbHelper = PrinterDatabaseHelper(applicationContext)
-                    val printerInfo = dbHelper.getLastPrinter()
+
+        // =========================================
+        // 🔹 Recuperar impresora desde la base local
+        // =========================================
+        val dbHelper = PrinterDatabaseHelper(applicationContext)
+        val printerInfo = dbHelper.getLastPrinter()
             ?: throw Exception("No hay información de impresora guardada")
 
         val address = printerInfo["address_ip"] as? String
             ?: throw Exception("La impresora no tiene dirección registrada")
 
-        // val currentTicket = printerInfo["ticket"] as Int
-        val currentTicket = when(val ticket = printerInfo["ticket"]) {
-    is Int -> ticket           // ya es Int
-    is String -> ticket.toIntOrNull() ?: 0   // String a Int, fallback a 0 si no se puede
-    else -> 0
-}
         val printerId = printerInfo["id"] as Int
+        Log.d("PrinterService", "🟢 Iniciando impresión hacia $address")
 
-        Log.d("PrinterService", "🟢 Iniciando impresión...")
+        // =========================================
+        // 🔹 Adaptador Bluetooth
+        // =========================================
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
+        btAdapter.cancelDiscovery()
 
-        val device = btAdapter.bondedDevices.firstOrNull {
-            it.address == address
-        } ?: throw Exception("Impresora no emparejada")
+        val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
+            ?: throw Exception("Impresora no emparejada")
 
         val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
-        // 🔹 crear SIEMPRE un socket nuevo
-        localSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
-        delay(100) // evita conflicto con canal anterior
-        localSocket.connect()
-        Log.d("PrinterService", "✅ Conectado al Bluetooth")
+        // =========================================
+        // 🔹 Intentar conexión con retry y fallback
+        // =========================================
+        suspend fun tryConnectWithRetry(maxRetries: Int = 3): BluetoothSocket {
+            var attempt = 0
+            var lastError: Exception? = null
+            while (attempt < maxRetries) {
+                try {
+                    delay(300)
+                    btAdapter.cancelDiscovery()
+                    val tmpSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                    tmpSocket.connect()
+                    Log.d("PrinterService", "✅ Conectado a ${device.name} (intento ${attempt + 1})")
+                    return tmpSocket
+                } catch (e: Exception) {
+                    Log.w("PrinterService", "⚠️ Falló intento ${attempt + 1}: ${e.message}")
+                    lastError = e
+                    try { localSocket?.close() } catch (_: Exception) {}
+                    delay(800)
+                }
+                attempt++
+            }
 
+            // 🔁 Fallback canal 1
+            Log.w("PrinterService", "🔁 Intentando fallback manual (canal 1)...")
+            return try {
+                val fallbackSocket = device.javaClass
+                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+                fallbackSocket.connect()
+                Log.d("PrinterService", "✅ Conectado por fallback canal 1")
+                fallbackSocket
+            } catch (e2: Exception) {
+                throw IOException("❌ No se pudo conectar tras $maxRetries intentos", e2)
+            }
+        }
+
+        localSocket = tryConnectWithRetry(maxRetries = 3)
         localOutput = localSocket.outputStream
-        if (localOutput == null) throw Exception("No se pudo abrir flujo de salida")
 
-         val json = JSONObject(payload)
-        // val productos1 = mutableListOf<TicketProduct>()
-        // val detailsArray = json.optJSONArray("details") ?: JSONArray()
-        // for (i in 0 until detailsArray.length()) {
-        //     val obj = detailsArray.getJSONObject(i)
-        //     productos1.add(
-        //         TicketProduct(
-        //             name = obj.optString("name"),
-        //             quantity = obj.optInt("quantity"),
-        //             totalUnit = obj.optDouble("totalUnit")
-        //         )
-        //     )
-        // }
-                // Log.d("PrinterService", "📩 Ticket recibido: $empresa1, $productos1")
+        // =========================================
+        // 🧾 Construcción del ticket
+        // =========================================
+        val json = JSONObject(payload)
+        val PAGE_WIDTH = 515
+        val LEFT_X = 85
+        var y = 25
+        val LINE_H = 28
 
-        // tu ticket aquí
-           val PAGE_WIDTH = 515
-                val LEFT_X = 85
-                var y = 25
+        val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
+        val dte = json.optString("typeDte", "SIN-DTE")
+        val ambiente = "01"
+        val caja = json.optString("box", "0")
+        val fecha = "${json.optString("date")} ${json.optString("time")}"
+        val fechaQR = json.optString("date")
+        val numControl = json.optString("controlNumber", "SIN-CONTROL")
+        val codGen = json.optString("generationCode", "-")
+        val cliente = json.optString("customer", "CONSUMIDOR FINAL")
+        val empleado = json.optString("employeeName", "N/A")
+        val total = json.optDouble("total", 0.0)
+        val subTotal = json.optDouble("subTotal", 0.0)
+        val vuelto = json.optDouble("vuelto", 0.0)
 
-                val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
-                val dte = json.optString("typeDte", "SIN-DTE")
-                val ambiente = "01"
-                val caja = json.optString("box", "0")
-                val fecha = "${json.optString("date")} ${json.optString("time")}"
-                val fechaQR = "${json.optString("date")}"
-                val numControl = json.optString("controlNumber", "SIN-CONTROL")
-                val codGen = json.optString("generationCode", "-")
-                val cliente = json.optString("customer", "CONSUMIDOR FINAL")
-                val empleado = json.optString("employeeName", "N/A")
-                val total = json.optDouble("total", 0.0)
+        val detailsArray = json.getJSONArray("details")
+        val productos = mutableListOf<Triple<String, String, String>>()
+        for (i in 0 until detailsArray.length()) {
+            val item = detailsArray.getJSONObject(i)
+            val nombre = item.getString("name")
+            val cantidad = item.getInt("quantity").toString()
+            val totalUnit = item.getDouble("totalUnit")
+            productos.add(Triple(nombre, cantidad, String.format("%.2f", totalUnit)))
+        }
 
-                // val productos = listOf(
-                //     Triple("Galletas super extra largas con nombre enorme que no cabe", "1", "1.00"),
-                //     Triple("Coca Cola 1.5L", "2", "2.50"),
-                //     Triple("Pan frances", "5", "2.25"),
-                //     Triple("Pan frances", "5", "2.25"),
-                // )
+        val PRODUCT_X = LEFT_X
+        val QTY_X = 370
+        val TOTAL_X = 455
+        val MAX_PROD_CHARS = 24
+        val ESPACIO_ENTRE_PRODUCTOS = 16
+        val BORDER_MARGIN_LEFT = 80
+        val BORDER_MARGIN_RIGHT = -250
+        val body = StringBuilder()
 
-val detailsArray = json.getJSONArray("details")
+        // =========================================
+        // 🔹 Encabezado
+        // =========================================
+        body.append("TEXT 7 0 $LEFT_X $y $empresa\n"); y += 40
+        body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n"); y += 20
+        body.append("TEXT 7 0 $LEFT_X $y DTE: $dte\n"); y += LINE_H
+        body.append("TEXT 7 0 $LEFT_X $y Caja: $caja\n"); y += LINE_H
+        body.append("TEXT 7 0 $LEFT_X $y Fecha: $fecha\n"); y += LINE_H
 
-val productos = mutableListOf<Triple<String, String, String>>()
+        for (linea in wrapTextCPCL("Cliente: $cliente", 32)) {
+            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+        }
+        for (linea in wrapTextCPCL("Empleado: $empleado", 32)) {
+            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+        }
+        for (linea in wrapTextCPCL("Num Control DTE: $numControl", 32)) {
+            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+        }
 
-for (i in 0 until detailsArray.length()) {
-    val item = detailsArray.getJSONObject(i)
-    val nombre = item.getString("name")
-    val cantidad = item.getInt("quantity").toString()
-    val totalUnit = item.getDouble("totalUnit")
-    val totalStr = String.format("%.2f", totalUnit) // 🔸 formatear a 2 decimales
+        body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+        y += 20
 
-    productos.add(Triple(nombre, cantidad, totalStr))
-}
+        // =========================================
+        // 🔹 Tabla productos
+        // =========================================
+        body.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
+        body.append("TEXT 7 0 $QTY_X $y Cant\n")
+        body.append("TEXT 7 0 $TOTAL_X $y Total\n")
+        y += 42
+        body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+        y += 17
 
+        for ((nombre, qty, totalU) in productos) {
+            val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
+            prodLines.forEachIndexed { idx, line ->
+                body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+            }
+            body.append("TEXT 7 0 $QTY_X $y $qty\n")
+            body.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
+            y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
+        }
 
-                val PRODUCT_X = LEFT_X
-                val QTY_X = 370
-                val TOTAL_X = 455
-                val LINE_H = 28
-                val MAX_PROD_CHARS = 24
-                val RIGHT_X = PAGE_WIDTH - LEFT_X
-val AJUSTE = 2
-val MAX_PROD_CHARS_REAL = MAX_PROD_CHARS - AJUSTE
-val ESPACIO_ENTRE_PRODUCTOS = 16
-val BORDER_MARGIN_LEFT = 80     // empieza más adentro (antes 30)
-val BORDER_MARGIN_RIGHT = -250 
-                val body = StringBuilder()
+        // =========================================
+        // 🔹 Totales
+        // =========================================
+        body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+        y += 16
 
-                // Encabezado
-                body.append("TEXT 7 0 $LEFT_X $y $empresa\n")
-                y += 40
-                // body.append("LINE 20 $y ${PAGE_WIDTH} $y 2\n")
-                body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+        fun calcularNumeroX(texto: String): Int {
+            val longitud = texto.length
+            return PAGE_WIDTH - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
+        }
 
-                y += 20
+        val subtotalTexto = formatMoneda(subTotal)
+        val totalTexto = formatMoneda(total)
+        val vueltoTexto = formatMoneda(vuelto)
+        body.append("TEXT 7 0 $LEFT_X $y Subtotal:\n")
+        body.append("TEXT 7 0 ${calcularNumeroX(subtotalTexto)} $y $subtotalTexto\n")
+        y += LINE_H
+        body.append("TEXT 7 0 $LEFT_X $y Total:\n")
+        body.append("TEXT 7 0 ${calcularNumeroX(totalTexto)} $y $totalTexto\n")
+        y += LINE_H
+        body.append("TEXT 7 0 $LEFT_X $y Vuelto:\n")
+        body.append("TEXT 7 0 ${calcularNumeroX(vueltoTexto)} $y $vueltoTexto\n")
+        y += 45
 
-                // Datos fiscales
-                body.append("TEXT 7 0 $LEFT_X $y DTE: $dte\n"); y += LINE_H
-                body.append("TEXT 7 0 $LEFT_X $y Caja: $caja\n"); y += LINE_H
-                body.append("TEXT 7 0 $LEFT_X $y Fecha: $fecha\n"); y += LINE_H
-                // body.append("TEXT 7 0 $LEFT_X $y Cliente: $cliente\n"); y += (LINE_H + 4)
-                // body.append("TEXT 7 0 $LEFT_X $y Empleado: $empleado\n"); y += (LINE_H + 4)
+        // =========================================
+        // 🔹 QR
+        // =========================================
+        body.append("SETMAG 1 1\n")
+        body.append("TONE 3\n")
+        val qrSize = 205
+        val qrScale = 5
+        val qrX = ((PAGE_WIDTH - qrSize) / 2) + 40
+        body.append("B QR $qrX $y M 2 U $qrScale\n")
+        body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
+        body.append("ENDQR\n")
+        y += (qrSize * (qrScale / 5.0)).toInt() + 25
 
-                val textoCliente = "Cliente: $cliente"
-val lineasCliente = wrapTextCPCL(textoCliente, 32) // Ajusta 32 al ancho real de tu papel
-for (linea in lineasCliente) {
-    body.append("TEXT 7 0 $LEFT_X $y $linea\n")
-    y += LINE_H
-}
-y += 4 // espacio extra entre secciones
+        val text1 = "Consulta tu DTE escaneando el QR"
+        val text2 = "Powered by SeedCodeSV"
+        body.append("TEXT 7 0 105 $y $text1\n"); y += 25
+        val text2X = (PAGE_WIDTH / 2) - (text2.length * CHAR_WIDTH / 2)
+        body.append("TEXT 7 0 $text2X $y $text2\n"); y += 30
 
-// 🔹 Empleado
-val textoEmpleado = "Empleado: $empleado"
-val lineasEmpleado = wrapTextCPCL(textoEmpleado, 32)
-for (linea in lineasEmpleado) {
-    body.append("TEXT 7 0 $LEFT_X $y $linea\n")
-    y += LINE_H
-}
-y += 4
+        val pageHeight = y + 20
+        val cpclCmd = buildString {
+            append("! 0 200 200 $pageHeight 1\n")
+            append("PAGE-WIDTH $PAGE_WIDTH\n")
+            append(body.toString())
+            append("PRINT\n")
+        }
 
-
-                val textoNumControl = "Num Control DTE: $numControl"
-val lineasNumControl = wrapTextCPCL(textoNumControl, 32) // 🔹 ajusta 32 según ancho del papel
-for (linea in lineasNumControl) {
-    body.append("TEXT 7 0 $LEFT_X $y $linea\n")
-    y += LINE_H
-}
-
-body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
-                // body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
-                y += 20
-
-                // Tabla encabezado
-                body.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
-                body.append("TEXT 7 0 $QTY_X $y Cant\n")
-                body.append("TEXT 7 0 $TOTAL_X $y Total\n")
-                y += 42
-
-body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
-// body.append("LINE ${LEFT_X - LINE_MARGIN - 10} $y ${RIGHT_X + LINE_MARGIN + 80} $y 2\n")
-// body.append("LINE ${LEFT_X - LINE_MARGIN - 10} $y ${RIGHT_X + LINE_MARGIN + 80} $y 2\n")
-
-                // body.append("LINE 0 $y ${PAGE_WIDTH - 20} $y 2\n")
-                y += 17
-                Log.d("PrinterService", "antes45")
-
-                // Filas
-             for ((nombre, qty, total) in productos) {
-    // wrap con límite ajustado para que no invada la columna QTY
-    val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS_REAL)
-    
-    prodLines.forEachIndexed { idx, line ->
-        body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
-    }
-
-    // cantidad y total en la primera línea del producto
-    body.append("TEXT 7 0 $QTY_X $y $qty\n")
-    body.append("TEXT 7 0 $TOTAL_X $y $total\n")
-
-    // subimos Y según cuántas líneas ocupó el nombre
-    // y += (prodLines.size * LINE_H) + 8
-        y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
-
-}
-                Log.d("PrinterService", "3dasdasd")
-
-                // // Línea final y total general
-                // body.append("LINE 20 $y ${PAGE_WIDTH - 20} $y 2\n")
-                // y += 16
-                // body.append("TEXT 7 0 $TOTAL_X $y 5.75\n")
-                // y += 60
-val subTotal = json.optDouble("subTotal", 0.0)
-
-val vuelto = json.optDouble("vuelto", 0.0)
-
-// =====================
-// Constantes de alineación
-// =====================
-// val CHAR_WIDTH = 7      // ancho aprox por carácter en la fuente CPCL 7
-// val MARGIN_RIGHT = 20   // margen derecho
-
-// =====================
-// Línea separadora
-// =====================
-body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
-y += 16
-val TOTAL_X_ADJ = PAGE_WIDTH - 200 // 150px antes del borde derecho, ajustable
-
-// =====================
-// Función para alinear números
-// =====================
-fun calcularNumeroX(numero: String, pageWidth: Int): Int {
-    val longitud = numero.length
-    return pageWidth - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
-}
-
-// =====================
-// Subtotal
-// =====================
-val subtotalTexto = formatMoneda(subTotal)
-val xSubtotal = calcularNumeroX(subtotalTexto, PAGE_WIDTH)
-body.append("TEXT 7 0 $LEFT_X $y Subtotal:\n")
-body.append("TEXT 7 0 $xSubtotal $y $subtotalTexto\n")
-y += LINE_H
-
-// =====================
-// Total
-// =====================
-val totalTexto = formatMoneda(total)
-val xTotal = calcularNumeroX(totalTexto, PAGE_WIDTH)
-body.append("TEXT 7 0 $LEFT_X $y Total:\n")
-body.append("TEXT 7 0 $xTotal $y $totalTexto\n")
-y += LINE_H
-
-// =====================
-// Vuelto
-// =====================
-val vueltoTexto = formatMoneda(vuelto)
-val xVuelto = calcularNumeroX(vueltoTexto, PAGE_WIDTH)
-body.append("TEXT 7 0 $LEFT_X $y Vuelto:\n")
-body.append("TEXT 7 0 $xVuelto $y $vueltoTexto\n")
-y += 45
-
-// =====================
-// Código QR centrado
-// =====================
-
-
-// val qrSize = 210
-// val qrX = (PAGE_WIDTH - qrSize) / 2
-// // val qrData = "https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$numControl&fechaEmi=$fecha"
-
-// // val qrBitmap = generarQR(qrData, qrSize)
-// // val qrBytes = bitmapToCPCLBytes(qrBitmap, qrX, y) // <-- nueva función (ver abajo)
-// // y += qrSize + 25
-
-// // val qrX = (PAGE_WIDTH - 210) / 2
-// body.append("B QR $qrX $y M 2 U 4\n")
-// body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fecha\n")
-// body.append("ENDQR\n")
-//  y += qrSize + 17
-
-
-val qrSize = 205
-
-// 🔹 Escala del QR: controla el tamaño real impreso (1–6)
-// U 4 → mediano, U 5 → grande
-val qrScale = 4.5
-
-// 🔹 Desplazamiento de compensación (depende del ancho del papel)
-val adjust = when (PAGE_WIDTH) {
-    in 550..600 -> 10     // impresora de 80 mm
-    in 400..520 -> -5     // impresora de 58 mm
-    else -> 0
-}
-
-// 🔹 Cálculo del centro real del QR
-val qrX = ((PAGE_WIDTH - qrSize) / 2) + 60
-                Log.d("PrinterService", "qr")
-
-// 🔹 Impresión del QR (modo CPCL nativo)
-body.append("B QR $qrX $y M 1 U $qrScale\n")
-body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
-body.append("ENDQR\n")
-
-// 🔹 Espacio inferior antes del texto
-y += (qrSize * (qrScale / 5.0)).toInt() + 25
-
-
-// y += 15
-val text1 = "Escanea el codigo QR para validar tu DTE"
-val text2 = "Powered by SeedCodeSV"
-val text1X = (PAGE_WIDTH / 2) - (text1.length * CHAR_WIDTH / 2)
-val text2X = (PAGE_WIDTH / 2) - (text2.length * CHAR_WIDTH / 2)
-body.append("TEXT 7 0 $text1X $y $text1\n")
-y += 25
-body.append("TEXT 7 0 $text2X $y $text2\n")
-y += 30
-// =====================
-// Texto debajo del QR centrado
-// =====================
-// val text = "Powered by SeedCodeSV"
-// val textX = (PAGE_WIDTH / 2) - (text.length * CHAR_WIDTH / 2)
-// body.append("TEXT 7 0 $textX $y $text\n")
-// y += 30
-
-val pageHeight = y + 20
-
-val cpclCmd = buildString {
-    append("! 0 200 200 $pageHeight 1\n")
-    append("PAGE-WIDTH $PAGE_WIDTH\n")
-    append(body.toString())
-    append("PRINT\n")
-}
-
-                Log.d("PrinterService", "antes")
-
-// val cpclHeader = buildString {
-//     append("! 0 200 200 $pageHeight 1\n")
-//     append("PAGE-WIDTH $PAGE_WIDTH\n")
-//     append(body.toString()) // todo lo demás excepto el QR
-// }
-// outputStream?.write(cpclHeader.toByteArray(Charsets.ISO_8859_1))
-
-// escribir los bytes del QR directamente (sin convertir a string)
-// outputStream.write(qrBytes)
-
-// cierre final
-// outputStream?.write("PRINT\n".toByteArray(Charsets.ISO_8859_1))
-// outputStream?.flush()
-
-// outputStream?.write(cpclCmd.toByteArray(Charset.forName("ISO-8859-1")))
-// outputStream?.flush()
+        // =========================================
+        // 🔹 Envío a impresora
+        // =========================================
         localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
         localOutput.flush()
         Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
-        val newTicket = dbHelper.incrementTicket(printerId)
+val before = printerInfo["ticket"]
+val after = dbHelper.incrementTicket(printerId)
+Log.d("PrinterService", "🎫 Ticket antes: $before → después: $after")
+        // dbHelper.incrementTicket(printerId)
 
     } catch (e: Exception) {
         Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
     } finally {
-        // 🔹 cerrar SIEMPRE el socket local (no el global)
         try { localOutput?.flush() } catch (_: Exception) {}
         try { localOutput?.close() } catch (_: Exception) {}
         try { localSocket?.close() } catch (_: Exception) {}
         Log.d("PrinterService", "🔻 Socket cerrado correctamente")
     }
 }
+
 private fun wrapTextCPCL(text: String, maxChars: Int): List<String> {
     val words = text.split(" ")
     val lines = mutableListOf<String>()
