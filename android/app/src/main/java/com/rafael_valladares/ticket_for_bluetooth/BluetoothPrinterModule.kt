@@ -547,6 +547,23 @@ fun getPrinterFullInfo(promise: Promise) {
 }
 
 @ReactMethod
+fun isServiceRunning(promise: Promise) {
+    try {
+        val context = reactApplicationContext
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val services = activityManager.getRunningServices(Int.MAX_VALUE)
+
+        val isRunning = services.any { serviceInfo ->
+            serviceInfo.service.className == "com.rafael_valladares.ticket_for_bluetooth.BluetoothPrinterService"
+        }
+
+        promise.resolve(isRunning)
+    } catch (e: Exception) {
+        promise.reject("SERVICE_CHECK_ERROR", e.message)
+    }
+}
+
+@ReactMethod
 fun checkBluetoothStatus(promise: Promise) {
     try {
         val btAdapter = BluetoothAdapter.getDefaultAdapter()

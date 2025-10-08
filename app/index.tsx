@@ -7,7 +7,7 @@ import {
   TrendingUp,
   Wifi,
 } from "lucide-react-native";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   NativeModules,
   Platform,
@@ -19,48 +19,49 @@ import {
   View,
 } from "react-native";
 
-import { IPrinterStatus } from "@/components/types/index.types";
 import { useIsFocused } from "@react-navigation/native";
-import { Battery, Smartphone } from "lucide-react-native";
+import { Smartphone } from "lucide-react-native";
 import { DeviceEventEmitter } from "react-native";
 
+import { activeTime, formatDate } from "@/constants/date";
 import { useFocusEffect } from "expo-router";
 import { BLEPrinter, IBLEPrinter } from "react-native-thermal-receipt-printer";
+import { returnDate } from "../constants/date";
 const { BluetoothPrinterModule } = NativeModules;
 export default function home() {
   const [activeService, setActiveService] = useState(false);
   const [activeBluetooth, setActiveBluetooth] = useState(false);
-  const [refresh, setRefresh] = useState(false);
 
   const [listPos, setListPos] = useState<IBLEPrinter[]>([]);
+  const [detailSave, setDetailSave] = useState<
+    {
+      model: "";
+      name: "";
+      ticket: "0";
+      address_ip: "";
+      date: "";
+      id: 0;
+    }[]
+  >([]);
   const [selectPrint, setSelectPrint] = useState({
     model: "N/A",
     name: "JLP352-653F",
     ticket: "0",
     address_ip: "66:32:64:9A:65:3F",
   });
-
-  const [listStatusPrint, setListStatusPrint] = useState<{
-    model: string;
-    name: string;
-    ticket: string;
-    address_ip: string;
-  }>();
   const isFocused = useIsFocused();
 
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS == "android") {
-        console.log("first");
         BluetoothPrinterModule.checkBluetoothStatus()
           .then(() => {
             setActiveBluetooth(true);
             BLEPrinter.init().then(async () => {
               const print = await BLEPrinter.getDeviceList();
               setListPos(print);
-              //   ondetail();
-              //   ondetail();
-              // ondetailDB();
+              ondetailDB();
+              checkService();
             });
           })
           .catch(() => {
@@ -80,7 +81,6 @@ export default function home() {
     const subscription = DeviceEventEmitter.addListener(
       "BluetoothStateChanged",
       (enabled: boolean) => {
-        console.log("📡 Bluetooth cambió:", enabled);
         setActiveBluetooth(enabled);
       }
     );
@@ -96,8 +96,6 @@ export default function home() {
       await BluetoothPrinterModule.requestEnableBluetooth();
     } catch (err) {
       setActiveBluetooth(false);
-    } finally {
-      setRefresh((prev) => !prev);
     }
   };
 
@@ -107,7 +105,6 @@ export default function home() {
         ToastAndroid.show("Error al momento de imprimir", ToastAndroid.CENTER);
       });
     } catch (err) {
-      console.log("❌ Error al imprimir por Bluetooth:", err);
       ToastAndroid.show("Error al momento de imprimir", ToastAndroid.CENTER);
     }
   };
@@ -120,86 +117,91 @@ export default function home() {
         selectPrint.ticket,
         selectPrint.address_ip
       )
-        .then((res: string) => {
-          console.log(res);
-          setActiveService(true);
+        .then(() => {
+          ToastAndroid.show("Servicio iniciado", ToastAndroid.CENTER);
         })
         .catch((err: any) => {
-          console.error(err);
+          checkService();
+        })
+        .finally(() => {
+          ondetailDB();
+          checkService();
         });
-      // BluetoothPrinterModule.getAllPrinterDetails()
-      //   .then((res: string) => {
-      //     console.log(res);
-      //   })
-      //   .catch((err: any) => {
-      //     console.error(err);
-      //   });
-
-      console.log("✅ Impresión bluetooth terminada");
-      // setActive(true);
     } catch (err) {
       ToastAndroid.show(
         "Ocurrio un problema al momento de iniciar el servicio",
         ToastAndroid.CENTER
       );
+    } finally {
+      checkService();
     }
   };
 
   const onFinish = async () => {
     try {
       BluetoothPrinterModule.stopBackgroundService()
-        .then((res: string) => {
-          console.log(res);
+        .then(() => {
+          ToastAndroid.show(
+            "Impresión bluetooth terminada",
+            ToastAndroid.CENTER
+          );
+          checkService();
         })
         .catch((err: any) => {
-          console.error(err);
+          ToastAndroid.show(
+            "Ocurrio un problema al momento de detener el servicio",
+            ToastAndroid.CENTER
+          );
+          checkService();
         });
-
-      console.log("✅ Impresión bluetooth terminada");
-      setActiveService(false);
     } catch (err) {
-      console.log("❌ Error al imprimir por Bluetooth:", err);
+      ToastAndroid.show(
+        "Ocurrio un problema al momento de detener el servicio",
+        ToastAndroid.CENTER
+      );
     }
   };
   const ondetailDB = async () => {
     try {
       BluetoothPrinterModule.getAllPrinterRecords()
-        .then((res: string) => {
-          console.log(res);
+        .then((res: any) => {
+          setDetailSave(res);
+          checkService();
         })
-        .catch((err: any) => {
-          console.error(err);
+        .catch(() => {
+          ToastAndroid.show(
+            "Ocurrio un problema al momento de detener los detalles",
+            ToastAndroid.CENTER
+          );
         });
-
-      console.log("✅ Impresión bluetooth terminada");
-      // setActive(false);
     } catch (err) {
-      console.log("❌ Error al imprimir por Bluetooth:", err);
+      ToastAndroid.show(
+        "Ocurrio un problema al momento de detener los detalles",
+        ToastAndroid.CENTER
+      );
     }
   };
-  const ondetail = async () => {
+  const checkService = async () => {
     try {
-      BluetoothPrinterModule.getPrinterFullInfo()
-        .then((res: IPrinterStatus) => {
+      BluetoothPrinterModule.isServiceRunning()
+        .then((res: any) => {
+          setActiveService(res);
           console.log(res);
-          setListStatusPrint(res);
         })
-        .catch((err: any) => {
-          console.error(err);
+        .catch(() => {
+          setActiveService(false);
         });
-    } catch (err) {
-      console.log("❌ Error al imprimir por Bluetooth:", err);
+    } catch (e) {
+      ToastAndroid.show(
+        "Ocurrio un problema al momento de comprobar el servicio",
+        ToastAndroid.CENTER
+      );
     }
   };
 
-  const printerInfo = {
-    model: "Epson TM-T20III",
-    serialNumber: "EPT2023-4567",
-    status: "Listo para imprimir",
-    paperLevel: 78,
-    temperature: "32°C",
-    uptime: "3h 24min",
-  };
+  const dataDB = useMemo(() => {
+    return detailSave.find((item) => returnDate(item.date) === formatDate());
+  }, [detailSave]);
 
   return (
     <ScrollView style={styles.container}>
@@ -273,7 +275,9 @@ export default function home() {
               <View style={styles.statIconWrapper}>
                 <BarChart3 size={20} color="#8B5CF6" />
               </View>
-              <Text style={styles.statValue}>{activeService ? "24" : "0"}</Text>
+              <Text style={styles.statValue}>
+                {activeService ? dataDB?.ticket ?? "0" : "0"}
+              </Text>
             </View>
             <Text style={styles.statLabel}>Impresiones</Text>
             <View style={styles.statBar}>
@@ -293,7 +297,10 @@ export default function home() {
         <View style={styles.servicesPanel}>
           <Text style={styles.panelTitle}>Estado de Servicios</Text>
 
-          <TouchableOpacity style={styles.serviceRow} onPress={ondetailDB}>
+          <TouchableOpacity
+            style={styles.serviceRow}
+            onPress={onActiveBluetooth}
+          >
             <View style={styles.serviceLeft}>
               <View
                 style={[
@@ -382,9 +389,9 @@ export default function home() {
                 <Printer size={28} color="#FFFFFF" />
               </View>
               <View style={styles.printerHeaderText}>
-                <Text style={styles.printerModel}>{printerInfo.model}</Text>
+                <Text style={styles.printerModel}>{dataDB?.name ?? "N/A"}</Text>
                 <Text style={styles.printerSerial}>
-                  S/N: {printerInfo.serialNumber}
+                  S/N: {dataDB?.address_ip ?? "N/A"}
                 </Text>
               </View>
               <View style={styles.printerStatusBadge}>
@@ -395,10 +402,12 @@ export default function home() {
             <View style={styles.printerMetrics}>
               <View style={styles.printerMetricItem}>
                 <Text style={styles.metricLabel}>Estado</Text>
-                <Text style={styles.metricValue}>{printerInfo.status}</Text>
+                <Text style={styles.metricValue}>
+                  {dataDB && dataDB.id + " - " + "IMPRESORA DISPONIBLE"}
+                </Text>
               </View>
 
-              <View style={styles.printerMetricDivider} />
+              {/* <View style={styles.printerMetricDivider} />
 
               <View style={styles.printerMetricItem}>
                 <View style={styles.metricRow}>
@@ -416,22 +425,20 @@ export default function home() {
                 <Text style={styles.metricValue}>
                   {printerInfo.paperLevel}%
                 </Text>
-              </View>
+              </View> */}
 
               <View style={styles.printerMetricDivider} />
 
               <View style={styles.printerMetricRow}>
                 <View style={styles.printerMetricItem}>
                   <Text style={styles.metricLabel}>Temperatura</Text>
-                  <Text style={styles.metricValueSmall}>
-                    {printerInfo.temperature}
-                  </Text>
+                  <Text style={styles.metricValueSmall}>{"28°C"}</Text>
                 </View>
 
                 <View style={styles.printerMetricItem}>
                   <Text style={styles.metricLabel}>Tiempo Activo</Text>
                   <Text style={styles.metricValueSmall}>
-                    {printerInfo.uptime}
+                    {activeTime(dataDB?.date ?? "")}
                   </Text>
                 </View>
               </View>
@@ -446,11 +453,14 @@ export default function home() {
               activeService && styles.controlButtonActive,
             ]}
             onPress={() => {
-              if (!activeBluetooth)
+              if (!activeBluetooth) {
                 ToastAndroid.show(
                   "POR FAVOR ACTIVA EL BLUETOOTH PARA CONTINUAR...",
                   ToastAndroid.CENTER
                 );
+                checkService();
+                return;
+              }
               activeService ? onFinish() : onStart();
             }}
           >

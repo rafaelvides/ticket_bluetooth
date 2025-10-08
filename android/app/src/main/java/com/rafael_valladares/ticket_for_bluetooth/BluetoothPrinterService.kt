@@ -89,7 +89,7 @@ private var ioSocket: Socket? = null                 // 👈 Socket.IO
 
     private fun buildNotification(content: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Impresión A Través de Bluetooth")
+            .setContentTitle("Impresión Bluetooth En Proceso...")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth) // ícono BT
             .setOngoing(true)
