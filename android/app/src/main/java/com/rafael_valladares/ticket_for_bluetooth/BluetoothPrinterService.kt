@@ -26,15 +26,20 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.max
 import java.nio.charset.Charset
-private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
-private const val MARGIN_RIGHT = 30   // margen derecho
+
+
+// ✅ Importa esto arriba del archivo
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.delay
 
 data class TicketProduct(
     val name: String,
     val quantity: Int,
     val totalUnit: Double
 )
-
+private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
+private const val MARGIN_RIGHT = 30   // margen derecho
 class BluetoothPrinterService : Service() {
 
     private var webSocket: WebSocket? = null
@@ -619,84 +624,80 @@ fun formatMoneda(valor: Double): String {
 }
 
 
+private val printMutex = Mutex()
+
 private suspend fun printTicketOnce(payload: String) {
-    var localSocket: BluetoothSocket? = null
-    var localOutput: OutputStream? = null
+    printMutex.withLock {
+        var localSocket: BluetoothSocket? = null
+        var localOutput: OutputStream? = null
 
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
-                return
-            }
-        }
+        try {
+            // Mantener CPU despierta por 10 segundos
+            wakeLock?.acquire(10_000L)
 
-        // =========================================
-        // 🔹 Recuperar impresora desde la base local
-        // =========================================
-        val dbHelper = PrinterDatabaseHelper(applicationContext)
-        val printerInfo = dbHelper.getLastPrinter()
-            ?: throw Exception("No hay información de impresora guardada")
-
-        val address = printerInfo["address_ip"] as? String
-            ?: throw Exception("La impresora no tiene dirección registrada")
-
-        val printerId = printerInfo["id"] as Int
-        Log.d("PrinterService", "🟢 Iniciando impresión hacia $address")
-
-        // =========================================
-        // 🔹 Adaptador Bluetooth
-        // =========================================
-        val btAdapter = BluetoothAdapter.getDefaultAdapter()
-        btAdapter.cancelDiscovery()
-
-        val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
-            ?: throw Exception("Impresora no emparejada")
-
-        val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-
-        // =========================================
-        // 🔹 Intentar conexión con retry y fallback
-        // =========================================
-        suspend fun tryConnectWithRetry(maxRetries: Int = 3): BluetoothSocket {
-            var attempt = 0
-            var lastError: Exception? = null
-            while (attempt < maxRetries) {
-                try {
-                    delay(300)
-                    btAdapter.cancelDiscovery()
-                    val tmpSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
-                    tmpSocket.connect()
-                    Log.d("PrinterService", "✅ Conectado a ${device.name} (intento ${attempt + 1})")
-                    return tmpSocket
-                } catch (e: Exception) {
-                    Log.w("PrinterService", "⚠️ Falló intento ${attempt + 1}: ${e.message}")
-                    lastError = e
-                    try { localSocket?.close() } catch (_: Exception) {}
-                    delay(800)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED
+                ) {
+                    Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+                    return
                 }
-                attempt++
             }
 
-            // 🔁 Fallback canal 1
-            Log.w("PrinterService", "🔁 Intentando fallback manual (canal 1)...")
-            return try {
-                val fallbackSocket = device.javaClass
-                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                    .invoke(device, 1) as BluetoothSocket
-                fallbackSocket.connect()
-                Log.d("PrinterService", "✅ Conectado por fallback canal 1")
-                fallbackSocket
-            } catch (e2: Exception) {
-                throw IOException("❌ No se pudo conectar tras $maxRetries intentos", e2)
+            val dbHelper = PrinterDatabaseHelper(applicationContext)
+            val printerInfo = dbHelper.getLastPrinter()
+                ?: throw Exception("No hay información de impresora guardada")
+
+            val address = printerInfo["address_ip"] as? String
+                ?: throw Exception("La impresora no tiene dirección registrada")
+            val printerId = printerInfo["id"] as Int
+
+            val btAdapter = BluetoothAdapter.getDefaultAdapter()
+            btAdapter.cancelDiscovery()
+
+            val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
+                ?: throw Exception("Impresora no emparejada")
+
+            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+            // Conexión con reintentos
+            suspend fun tryConnectWithRetry(maxRetries: Int = 3): BluetoothSocket {
+                var attempt = 0
+                var lastError: Exception? = null
+                while (attempt < maxRetries) {
+                    try {
+                        delay(300)
+                        btAdapter.cancelDiscovery()
+                        val tmpSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                        tmpSocket.connect()
+                        Log.d("PrinterService", "✅ Conectado a ${device.name} (intento ${attempt + 1})")
+                        return tmpSocket
+                    } catch (e: Exception) {
+                        Log.w("PrinterService", "⚠️ Falló intento ${attempt + 1}: ${e.message}")
+                        lastError = e
+                        try { localSocket?.close() } catch (_: Exception) {}
+                        delay(800)
+                    }
+                    attempt++
+                }
+
+                // Fallback manual canal 1
+                Log.w("PrinterService", "🔁 Intentando fallback manual (canal 1)...")
+                return try {
+                    val fallbackSocket = device.javaClass
+                        .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                        .invoke(device, 1) as BluetoothSocket
+                    fallbackSocket.connect()
+                    Log.d("PrinterService", "✅ Conectado por fallback canal 1")
+                    fallbackSocket
+                } catch (e2: Exception) {
+                    throw IOException("❌ No se pudo conectar tras $maxRetries intentos", e2)
+                }
             }
-        }
 
-        localSocket = tryConnectWithRetry(maxRetries = 3)
-        localOutput = localSocket.outputStream
-
+            localSocket = tryConnectWithRetry()
+            delay(200)
+            localOutput = localSocket.outputStream
         // =========================================
         // 🧾 Construcción del ticket
         // =========================================
@@ -894,21 +895,32 @@ y += 45
         // =========================================
         localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
         localOutput.flush()
-        Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
-val before = printerInfo["ticket"]
-val after = dbHelper.incrementTicket(printerId)
-Log.d("PrinterService", "🎫 Ticket antes: $before → después: $after")
+        // Esperar envío completo antes de cerrar
+            delay(250)
+
+            // Incrementar ticket
+            val before = printerInfo["ticket"]
+            val after = dbHelper.incrementTicket(printerId)
+            Log.d("PrinterService", "🎫 Ticket antes: $before → después: $after")
+
+            Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
         // dbHelper.incrementTicket(printerId)
 
-    } catch (e: Exception) {
-        Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
-    } finally {
-        try { localOutput?.flush() } catch (_: Exception) {}
-        try { localOutput?.close() } catch (_: Exception) {}
-        try { localSocket?.close() } catch (_: Exception) {}
-        Log.d("PrinterService", "🔻 Socket cerrado correctamente")
-    }
-}
+     } catch (e: Exception) {
+            Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
+        } finally {
+            // Cierres seguros
+            try { localOutput?.flush() } catch (_: Exception) {}
+            try { localOutput?.close() } catch (_: Exception) {}
+            try { localSocket?.close() } catch (_: Exception) {}
+            Log.d("PrinterService", "🔻 Socket cerrado correctamente")
+
+            // Liberar wakelock si sigue activo
+            try {
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+            } catch (_: Exception) {}
+        }
+    }}
 
 private fun wrapTextCPCL(text: String, maxChars: Int): List<String> {
     val words = text.split(" ")
