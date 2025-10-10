@@ -652,7 +652,7 @@ private suspend fun printTicketOnce(payload: String) {
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
         btAdapter.cancelDiscovery()
 
-        val device = btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
+        val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
             ?: throw Exception("Impresora no emparejada")
 
         val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")

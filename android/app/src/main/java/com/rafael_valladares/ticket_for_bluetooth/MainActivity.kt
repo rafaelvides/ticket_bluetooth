@@ -48,9 +48,9 @@ override fun onCreate(savedInstanceState: Bundle?) {
         }
     }
 
-    // 🚀 Inicia el servicio Bluetooth
-    val intent = Intent(this, BluetoothPrinterService::class.java)
-    ContextCompat.startForegroundService(this, intent)
+    // // 🚀 Inicia el servicio Bluetooth
+    // val intent = Intent(this, BluetoothPrinterService::class.java)
+    // ContextCompat.startForegroundService(this, intent)
 
     // ⚡ Evita que Android congele el servicio
     requestBatteryOptimizationPermission()

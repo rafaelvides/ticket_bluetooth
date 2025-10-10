@@ -111,7 +111,6 @@ export default function home() {
 
   const onStart = async () => {
     try {
-      console.log(selectPrint);
       BluetoothPrinterModule.startBackgroundService(
         selectPrint.model,
         selectPrint.name,
@@ -187,7 +186,6 @@ export default function home() {
       BluetoothPrinterModule.isServiceRunning()
         .then((res: any) => {
           setActiveService(res);
-          console.log(res);
         })
         .catch(() => {
           setActiveService(false);

@@ -22,7 +22,6 @@ class PrinterDatabaseHelper(context: Context) :
         private const val COLUMN_TICKET = "ticket"
         private const val COLUMN_DATE = "date"
         private const val COLUMN_ADDRESS_IP = "address_ip"
-
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -46,9 +45,9 @@ class PrinterDatabaseHelper(context: Context) :
 
     fun insertPrinterInfo(
         model: String,
-        ticket: String, 
-        address_ip: String,
-        name: String
+        name: String,
+    ticket: String,
+    address_ip: String
     ): Long {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val currentDate = dateFormat.format(Date())
@@ -99,10 +98,10 @@ class PrinterDatabaseHelper(context: Context) :
                 val item = mapOf(
                     "id" to it.getInt(0),
                     "model" to it.getString(1),
-                    "ticket" to it.getString(4),
-                    "address_ip" to it.getString(5),
-                    "name" to it.getString(6),
-                    "date" to it.getString(6),
+                    "ticket" to it.getString(2),
+                    "address_ip" to it.getString(3),
+                    "name" to it.getString(4),
+                    "date" to it.getString(5),
                 )
                 list.add(item)
             }
