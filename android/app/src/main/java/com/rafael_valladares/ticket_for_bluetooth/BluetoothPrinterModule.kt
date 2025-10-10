@@ -383,35 +383,25 @@ private fun sendEvent(eventName: String, data: Boolean) {
 
 
 @ReactMethod
-fun startBackgroundService( 
-    model: String,
-    name: String,
-    ticket: String,
-    address_ip: String,
-    promise: Promise) {
+fun startBackgroundService(model: String, name: String, ticket: String, address_ip: String, promise: Promise) {
     try {
         val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
-        reactApplicationContext.startService(intent)
-
-          val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
-         if (dbHelper.existsPrinterToday()) {
-            Log.d("PrinterService", "🟡 Ya existe un registro de impresora para hoy — no se insertará otro.")
-            promise.resolve("Registro existente — servicio iniciado sin duplicar registro.")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            reactApplicationContext.startForegroundService(intent) // ✅ obligatorio desde Android 8
         } else {
-            dbHelper.insertPrinterInfo(
-                model = model,
-                name = name,
-                ticket = ticket,
-                address_ip = address_ip
-            )
-            Log.d("PrinterService", "🟢 Nuevo registro de impresora creado para hoy.")
-            promise.resolve("Servicio iniciado y registro creado.")
+            reactApplicationContext.startService(intent)
         }
-        promise.resolve("Servicio iniciado")
+
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        if (!dbHelper.existsPrinterToday()) {
+            dbHelper.insertPrinterInfo(model, name, ticket, address_ip)
+        }
+        promise.resolve("Servicio en segundo plano iniciado correctamente")
     } catch (e: Exception) {
-        promise.reject("ERROR", e.message)
+        promise.reject("SERVICE_ERROR", e.message)
     }
 }
+
 
 @ReactMethod
 fun stopBackgroundService(promise: Promise) {
@@ -662,22 +652,51 @@ if (activity == null) {
     }
 
     // ✅ Mostrar diálogo nativo para encender Bluetooth
-    @ReactMethod
-    fun requestEnableBluetooth(promise: Promise) {
-        try {
-          val activity: Activity? = reactApplicationContext.currentActivity
-if (activity == null) {
-    promise.reject("NO_ACTIVITY", "No hay actividad activa para abrir el diálogo.")
-    return
+@ReactMethod
+fun requestEnableBluetooth(promise: Promise) {
+    try {
+        val activity = reactApplicationContext.currentActivity
+
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No hay actividad activa para abrir el diálogo.")
+            return
+        }
+
+        // ✅ Verificar permisos nuevos desde Android 12 (API 31)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val permissions = arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.BLUETOOTH_SCAN,
+        Manifest.permission.BLUETOOTH_ADVERTISE,
+        Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE
+            )
+
+            val missingPermissions = permissions.filter {
+                ActivityCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
+            }
+
+            if (missingPermissions.isNotEmpty()) {
+                ActivityCompat.requestPermissions(activity, missingPermissions.toTypedArray(), 1001)
+                promise.reject(
+                    "PERMISSION_REQUIRED",
+                    "Se necesitan permisos BLUETOOTH_CONNECT y BLUETOOTH_SCAN."
+                )
+                return
+            }
+        }
+
+        // ✅ Intent para encender Bluetooth (solo si la Activity está activa)
+        val intent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+        activity.runOnUiThread {
+            activity.startActivityForResult(intent, 1002)
+        }
+
+        promise.resolve("Mostrando diálogo para encender Bluetooth")
+    } catch (e: Exception) {
+        promise.reject("ENABLE_ERROR", e.message, e)
+    }
 }
 
-            val intent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
-            activity.startActivityForResult(intent, 1002)
-            promise.resolve("Mostrando diálogo para encender Bluetooth")
-        } catch (e: Exception) {
-            promise.reject("ENABLE_ERROR", e.message, e)
-        }
-    }
 
 
 }

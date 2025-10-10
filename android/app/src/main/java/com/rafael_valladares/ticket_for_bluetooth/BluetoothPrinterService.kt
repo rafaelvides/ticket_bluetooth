@@ -1,34 +1,31 @@
 package com.rafael_valladares.ticket_for_bluetooth
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
+import android.app.*
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
-import android.os.Build
-import android.os.IBinder
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.*
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import io.socket.client.IO
+import io.socket.client.Socket
+import kotlinx.coroutines.*
+import okhttp3.*
+import org.json.JSONObject
+import java.io.IOException
 import java.io.OutputStream
+import java.net.URISyntaxException
+import java.net.Socket as JavaSocket
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.max
-import android.content.Intent
-import okhttp3.*  // necesitas agregar OkHttp en tu gradle
-import okio.ByteString
-import io.socket.client.IO
-import io.socket.client.Socket
-import org.json.JSONObject
-import java.net.URISyntaxException
-import org.json.JSONArray
-import kotlinx.coroutines.*
-import android.content.pm.PackageManager  // 👈 AÑADE ESTA LÍNEA
 import java.nio.charset.Charset
-import com.rafael_valladares.ticket_for_bluetooth.PrinterDatabaseHelper
-import java.io.IOException
-
 private const val CHAR_WIDTH = 7      // ancho aprox por carácter en CPCL
 private const val MARGIN_RIGHT = 30   // margen derecho
 
@@ -47,6 +44,7 @@ class BluetoothPrinterService : Service() {
     private val CHANNEL_ID = "bluetooth_printer_channel"
     private var btSocket: BluetoothSocket? = null        // 👈 Bluetooth impresora
 private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private var socketRed: Socket? = null
     private val SOCKET_URL = "wss://si-ham-api.erpseedcodeone.online/socket"
@@ -56,45 +54,112 @@ private var ioSocket: Socket? = null                 // 👈 Socket.IO
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
-            return
+        Log.d("PrinterService", "🟢 onCreate iniciado")
+
+        // ✅ Mantener CPU despierto
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BluetoothPrinter::Lock")
+        wakeLock?.acquire()
+
+        // ✅ Crear canal de notificación
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Bluetooth Printer Service",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Servicio persistente para impresión Bluetooth"
+            setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+        }
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(channel)
+
+        // ✅ Notificación permanente
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Servicio de impresión activo")
+            .setContentText("Bluetooth Printer funcionando en segundo plano")
+            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .build()
+
+        // ✅ Iniciar foreground service correctamente según versión
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(1, notification)
+        }
+
+        // ✅ Iniciar tus procesos de red y Bluetooth
+        serviceScope.launch {
+            try {
+                Log.d("PrinterService", "⚡ Iniciando conexión Socket.IO y Bluetooth...")
+                startSockets()
+            } catch (e: Exception) {
+                Log.e("PrinterService", "❌ Error iniciando sockets: ${e.message}")
+            }
         }
     }
-        startForeground(1, buildNotification("Servicio de impresión activo"))
-                startSocket()  // 👈 aquí arrancamos el socket de red
 
-    }
 
+ 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Thread {  }.start()
+        // tu lógica actual
         return START_STICKY
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Bluetooth Printer",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
+
+ private fun createNotificationChannel() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Bluetooth Printer",
+            NotificationManager.IMPORTANCE_DEFAULT // 👈 cambia de LOW a DEFAULT
+        )
+        channel.description = "Canal usado por el servicio de impresión Bluetooth"
+        channel.setSound(null, null) // opcional: silencioso
+        channel.enableVibration(false)
+        channel.lockscreenVisibility = Notification.VISIBILITY_SECRET
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
     }
+}
 
     private fun buildNotification(content: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Impresión Bluetooth En Proceso...")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth) // ícono BT
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+                .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+             .setAutoCancel(false)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+    .setSilent(true)
             .build()
     }
+override fun onTaskRemoved(rootIntent: Intent?) {
+    super.onTaskRemoved(rootIntent)
+    val restartService = Intent(applicationContext, BluetoothPrinterService::class.java)
+    val restartPendingIntent = PendingIntent.getService(
+        this, 1, restartService,
+        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val alarm = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    alarm.set(
+        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+        SystemClock.elapsedRealtime() + 1000,
+        restartPendingIntent
+    )
+    Log.d("PrinterService", "♻️ Servicio reprogramado al cerrar la app")
+}
+
 
     private fun printTicketInBackground() {
         try {
@@ -196,7 +261,9 @@ override fun onDestroy() {
     super.onDestroy()
     try { outputStream?.close() } catch (_: Exception) {}
     try { btSocket?.close() } catch (_: Exception) {}
+            try { wakeLock?.release() } catch (_: Exception) {}
     try { ioSocket?.disconnect() } catch (_: Exception) {}
+
     socketRed?.disconnect()
         socketRed?.close()
 }
@@ -220,51 +287,39 @@ override fun onDestroy() {
 
 
 
-      private fun startSocket() {
-    if (socketRed?.connected() == true) return
-    try {
-        val opts = IO.Options().apply {
-            reconnection = true
-            reconnectionAttempts = Int.MAX_VALUE
-            reconnectionDelay = 1000
-            reconnectionDelayMax = 12000
-            transports = arrayOf("websocket")
-            query = "transmitterId=52" // 👈 ajusta con tu valor real
+ private fun startSockets() {
+        try {
+            val opts = IO.Options().apply {
+                reconnection = true
+                reconnectionAttempts = Int.MAX_VALUE
+                reconnectionDelay = 2000
+                transports = arrayOf("websocket")
+                query = "transmitterId=52"
+            }
+
+            ioSocket = IO.socket("wss://facturacion-testmt-api.erpseedcodeone.online/sales-gateway", opts)
+
+            ioSocket?.on(Socket.EVENT_CONNECT) {
+                Log.d("PrinterService", "✅ Socket conectado")
+            }
+
+            ioSocket?.on("response-print-by-bluetooth") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                Log.d("PrinterService", "📩 Ticket recibido: $data")
+                serviceScope.launch {
+                    printTicketOnce(data.toString())
+                }
+            }
+
+            ioSocket?.on(Socket.EVENT_DISCONNECT) {
+                Log.w("PrinterService", "⚠️ Socket desconectado")
+            }
+
+            ioSocket?.connect()
+        } catch (e: URISyntaxException) {
+            Log.e("PrinterService", "URI error", e)
         }
-
-        socketRed = IO.socket("wss://facturacion-testmt-api.erpseedcodeone.online/sales-gateway", opts)
-
-        socketRed?.on(Socket.EVENT_CONNECT) {
-            Log.d("PrinterService", "✅ Socket conectado")
-        }
-
-        // socketRed?.on("response-print-by-bluetooth") { args ->
-        //     val data = args.firstOrNull() as? JSONObject ?: return@on
-        //     Log.d("PrinterService", "📩 Ticket recibido: $data")
-        //     Thread { printTicketInBackgroundSocket(data.toString()) }.start()
-        // }
-
-      socketRed?.on("response-print-by-bluetooth") { args ->
-    val data = args.firstOrNull() as? JSONObject ?: return@on
-    Log.d("PrinterService", "📩 Ticket recibido: $data")
-    serviceScope.launch {
-        printTicketOnce(data.toString())
     }
-}
-
-        socketRed?.on(Socket.EVENT_CONNECT_ERROR) { args ->
-            Log.e("PrinterService", "❌ Error de conexión: ${args.joinToString()}")
-        }
-
-        socketRed?.on(Socket.EVENT_DISCONNECT) {
-            Log.w("PrinterService", "⚠️ Socket desconectado")
-        }
-
-        socketRed?.connect()
-    } catch (e: URISyntaxException) {
-        Log.e("PrinterService", "URI error", e)
-    }
-}
 private suspend fun closeSafe() {
     try { outputStream?.flush() } catch (_: Exception) {}
     try { outputStream?.close() } catch (_: Exception) {}
@@ -597,7 +652,7 @@ private suspend fun printTicketOnce(payload: String) {
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
         btAdapter.cancelDiscovery()
 
-        val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
+        val device = btAdapter.bondedDevices.firstOrNull { it.address == "66:32:64:9A:65:3F" }
             ?: throw Exception("Impresora no emparejada")
 
         val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -648,6 +703,7 @@ private suspend fun printTicketOnce(payload: String) {
         val json = JSONObject(payload)
         val PAGE_WIDTH = 515
         val LEFT_X = 85
+        val OFFSET_X = 40 
         var y = 25
         val LINE_H = 28
 
@@ -687,20 +743,20 @@ private suspend fun printTicketOnce(payload: String) {
         // =========================================
         // 🔹 Encabezado
         // =========================================
-        body.append("TEXT 7 0 $LEFT_X $y $empresa\n"); y += 40
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $empresa\n"); y += 40
         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n"); y += 20
-        body.append("TEXT 7 0 $LEFT_X $y DTE: $dte\n"); y += LINE_H
-        body.append("TEXT 7 0 $LEFT_X $y Caja: $caja\n"); y += LINE_H
-        body.append("TEXT 7 0 $LEFT_X $y Fecha: $fecha\n"); y += LINE_H
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y DTE: $dte\n"); y += LINE_H
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Caja: $caja\n"); y += LINE_H
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Fecha: $fecha\n"); y += LINE_H
 
         for (linea in wrapTextCPCL("Cliente: $cliente", 32)) {
-            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+            body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
         }
         for (linea in wrapTextCPCL("Empleado: $empleado", 32)) {
-            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+            body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
         }
         for (linea in wrapTextCPCL("Num Control DTE: $numControl", 32)) {
-            body.append("TEXT 7 0 $LEFT_X $y $linea\n"); y += LINE_H
+            body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
         }
 
         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
@@ -740,13 +796,13 @@ private suspend fun printTicketOnce(payload: String) {
         val subtotalTexto = formatMoneda(subTotal)
         val totalTexto = formatMoneda(total)
         val vueltoTexto = formatMoneda(vuelto)
-        body.append("TEXT 7 0 $LEFT_X $y Subtotal:\n")
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
         body.append("TEXT 7 0 ${calcularNumeroX(subtotalTexto)} $y $subtotalTexto\n")
         y += LINE_H
-        body.append("TEXT 7 0 $LEFT_X $y Total:\n")
+        body.append("TEXT 7 0${LEFT_X + OFFSET_X} $y Total:\n")
         body.append("TEXT 7 0 ${calcularNumeroX(totalTexto)} $y $totalTexto\n")
         y += LINE_H
-        body.append("TEXT 7 0 $LEFT_X $y Vuelto:\n")
+        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
         body.append("TEXT 7 0 ${calcularNumeroX(vueltoTexto)} $y $vueltoTexto\n")
         y += 45
 
@@ -757,7 +813,7 @@ private suspend fun printTicketOnce(payload: String) {
         body.append("TONE 3\n")
         val qrSize = 205
         val qrScale = 5
-        val qrX = ((PAGE_WIDTH - qrSize) / 2) + 40
+        val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X
         body.append("B QR $qrX $y M 2 U $qrScale\n")
         body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
         body.append("ENDQR\n")

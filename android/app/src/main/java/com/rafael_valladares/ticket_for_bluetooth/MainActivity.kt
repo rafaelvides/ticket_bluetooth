@@ -8,20 +8,66 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import android.content.pm.PackageManager
 
+// 🔹 Agrega estos imports faltantes:
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import android.net.Uri
+import android.provider.Settings
+import android.os.PowerManager
+import android.content.Context
+import androidx.core.app.ActivityCompat
+import android.Manifest
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
-  override fun onCreate(savedInstanceState: Bundle?) {
-    // Set the theme to AppTheme BEFORE onCreate to support
-    // coloring the background, status bar, and navigation bar.
-    // This is required for expo-splash-screen.
-    // setTheme(R.style.AppTheme);
+override fun onCreate(savedInstanceState: Bundle?) {
+    SplashScreenManager.registerOnActivity(this)
     // @generated begin expo-splashscreen - expo prebuild (DO NOT MODIFY) sync-f3ff59a738c56c9a6119210cb55f0b613eb8b6af
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
-  }
+
+    // ✅ Bluetooth permisos Android 12+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val permissions = arrayOf(
+            android.Manifest.permission.BLUETOOTH_CONNECT,
+            android.Manifest.permission.BLUETOOTH_SCAN,
+            android.Manifest.permission.BLUETOOTH_ADVERTISE
+        )
+        ActivityCompat.requestPermissions(this, permissions, 100)
+    }
+
+    // ✅ Notificaciones Android 13+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2001)
+        }
+    }
+
+    // 🚀 Inicia el servicio Bluetooth
+    val intent = Intent(this, BluetoothPrinterService::class.java)
+    ContextCompat.startForegroundService(this, intent)
+
+    // ⚡ Evita que Android congele el servicio
+    requestBatteryOptimizationPermission()
+}
+
+private fun requestBatteryOptimizationPermission() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        }
+    }
+}
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
