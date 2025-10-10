@@ -701,11 +701,20 @@ private suspend fun printTicketOnce(payload: String) {
         // 🧾 Construcción del ticket
         // =========================================
         val json = JSONObject(payload)
-        val PAGE_WIDTH = 515
+        val PAGE_WIDTH = 558
         val LEFT_X = 85
-        val OFFSET_X = 40 
+        val tableBody = StringBuilder()
+        val OFFSET_X = 10 //mover a la derecha todo el texto entre mas sea mas es el espacio que deja al principio
+        val TABLE_OFFSET_X = 10  // <- mueve toda la tabla a la derecha
         var y = 25
         val LINE_H = 28
+
+        fun calcularNumeroXC(texto: String, paddingRight: Int = 40): Int {
+    val charWidth = 14
+    val textWidth = texto.length * charWidth
+    return PAGE_WIDTH - textWidth - paddingRight
+}
+
 
         val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
         val dte = json.optString("typeDte", "SIN-DTE")
@@ -731,10 +740,12 @@ private suspend fun printTicketOnce(payload: String) {
             productos.add(Triple(nombre, cantidad, String.format("%.2f", totalUnit)))
         }
 
-        val PRODUCT_X = LEFT_X
-        val QTY_X = 370
-        val TOTAL_X = 455
-        val MAX_PROD_CHARS = 24
+      val PRODUCT_X = LEFT_X + TABLE_OFFSET_X
+      val PRODUCT_MAX_WIDTH = 260   // ancho máximo para texto de producto
+val QTY_X = PRODUCT_X + PRODUCT_MAX_WIDTH + 20  // empieza después del producto
+val TOTAL_X = QTY_X + 80  
+
+        val MAX_PROD_CHARS = 17 //cuantos caracteres para el nombre del producto
         val ESPACIO_ENTRE_PRODUCTOS = 16
         val BORDER_MARGIN_LEFT = 80
         val BORDER_MARGIN_RIGHT = -250
@@ -765,6 +776,10 @@ private suspend fun printTicketOnce(payload: String) {
         // =========================================
         // 🔹 Tabla productos
         // =========================================
+    val subtotalTexto = formatMoneda(subTotal)
+        val totalTexto = formatMoneda(total)
+        val vueltoTexto = formatMoneda(vuelto)
+        //nueva tabla 
         body.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
         body.append("TEXT 7 0 $QTY_X $y Cant\n")
         body.append("TEXT 7 0 $TOTAL_X $y Total\n")
@@ -772,48 +787,89 @@ private suspend fun printTicketOnce(payload: String) {
         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
         y += 17
 
-        for ((nombre, qty, totalU) in productos) {
-            val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
-            prodLines.forEachIndexed { idx, line ->
-                body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
-            }
-            body.append("TEXT 7 0 $QTY_X $y $qty\n")
-            body.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
-            y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
-        }
+      fun wrapColumnCPCL(text: String, maxChars: Int): List<String> {
+    val lines = mutableListOf<String>()
+    var start = 0
+    while (start < text.length) {
+        val end = minOf(start + maxChars, text.length)
+        lines.add(text.substring(start, end))
+        start += maxChars
+    }
+    return lines
+}
+      for ((nombre, qty, totalU) in productos) {
+    val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
+    prodLines.forEachIndexed { idx, line ->
+        body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+    }
+    body.append("TEXT 7 0 $QTY_X $y $qty\n")
+    body.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
+    y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
+}
 
-        // =========================================
-        // 🔹 Totales
-        // =========================================
         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
         y += 16
+        
+body.append(tableBody.toString())
+body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
+body.append("TEXT 7 0 ${calcularNumeroXC(subtotalTexto)} $y $subtotalTexto\n")
+y += LINE_H
 
-        fun calcularNumeroX(texto: String): Int {
-            val longitud = texto.length
-            return PAGE_WIDTH - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
-        }
+body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Total:\n")
+body.append("TEXT 7 0 ${calcularNumeroXC(totalTexto)} $y $totalTexto\n")
+y += LINE_H
 
-        val subtotalTexto = formatMoneda(subTotal)
-        val totalTexto = formatMoneda(total)
-        val vueltoTexto = formatMoneda(vuelto)
-        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
-        body.append("TEXT 7 0 ${calcularNumeroX(subtotalTexto)} $y $subtotalTexto\n")
-        y += LINE_H
-        body.append("TEXT 7 0${LEFT_X + OFFSET_X} $y Total:\n")
-        body.append("TEXT 7 0 ${calcularNumeroX(totalTexto)} $y $totalTexto\n")
-        y += LINE_H
-        body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
-        body.append("TEXT 7 0 ${calcularNumeroX(vueltoTexto)} $y $vueltoTexto\n")
-        y += 45
+body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
+body.append("TEXT 7 0 ${calcularNumeroXC(vueltoTexto)} $y $vueltoTexto\n")
+y += 45
+
+        //========================================================
+//         tableBody.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
+// tableBody.append("TEXT 7 0 $QTY_X $y Cant\n")
+// tableBody.append("TEXT 7 0 $TOTAL_X $y Total\n")
+// y += 42
+// tableBody.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+// y += 17
+
+// for ((nombre, qty, totalU) in productos) {
+//     val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
+//     prodLines.forEachIndexed { idx, line ->
+//         tableBody.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+//     }
+//     tableBody.append("TEXT 7 0 $QTY_X $y $qty\n")
+//     tableBody.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
+//     y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
+// }
+//         //========================================================
+
+//         // =========================================
+//         // 🔹 Totales
+//         // =========================================
+
+
+//         fun calcularNumeroX(texto: String): Int {
+//             val longitud = texto.length
+//             return PAGE_WIDTH - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
+//         }
+    
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
+//         body.append("TEXT 7 0 ${calcularNumeroX(subtotalTexto)} $y $subtotalTexto\n")
+//         y += LINE_H
+//         body.append("TEXT 7 0${LEFT_X + OFFSET_X} $y Total:\n")
+//         body.append("TEXT 7 0 ${calcularNumeroX(totalTexto)} $y $totalTexto\n")
+//         y += LINE_H
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
+//         body.append("TEXT 7 0 ${calcularNumeroX(vueltoTexto)} $y $vueltoTexto\n")
+//         y += 45
 
         // =========================================
         // 🔹 QR
         // =========================================
-        body.append("SETMAG 1 1\n")
+        body.append("SETMAG 1\n")
         body.append("TONE 3\n")
         val qrSize = 205
         val qrScale = 5
-        val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X
+        val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X + 13
         body.append("B QR $qrX $y M 2 U $qrScale\n")
         body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
         body.append("ENDQR\n")
