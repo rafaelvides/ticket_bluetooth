@@ -383,7 +383,7 @@ private fun sendEvent(eventName: String, data: Boolean) {
 
 
 @ReactMethod
-fun startBackgroundService(model: String, name: String, ticket: String, address_ip: String, promise: Promise) {
+fun startBackgroundService(promise: Promise) {
     try {
         val intent = Intent(reactApplicationContext, BluetoothPrinterService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -392,10 +392,10 @@ fun startBackgroundService(model: String, name: String, ticket: String, address_
             reactApplicationContext.startService(intent)
         }
 
-        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
-        if (!dbHelper.existsPrinterToday()) {
-            dbHelper.insertPrinterInfo(model, name, ticket, address_ip)
-        }
+        // val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        // if (!dbHelper.existsPrinterByDoc(doc)) {
+        //     dbHelper.insertPrinterInfo(model, name, ticket, address_ip)
+        // }
         promise.resolve("Servicio en segundo plano iniciado correctamente")
     } catch (e: Exception) {
         promise.reject("SERVICE_ERROR", e.message)
@@ -410,10 +410,10 @@ fun stopBackgroundService(promise: Promise) {
         reactApplicationContext.stopService(intent)
 
          // 2️⃣ Eliminamos todos los registros de la tabla 'printer'
-        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
-        val db = dbHelper.writableDatabase
-        val deletedRows = db.delete("printer", null, null)
-        db.close()
+        // val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        // val db = dbHelper.writableDatabase
+        // val deletedRows = db.delete("printer", null, null)
+        // db.close()
         promise.resolve("Servicio detenido")
     } catch (e: Exception) {
         promise.reject("ERROR", e.message)
@@ -434,12 +434,66 @@ fun getAllPrinterRecords(promise: Promise) {
             map.putString("address_ip", rec["address_ip"] as String)
             map.putString("date", rec["date"] as String)
             map.putInt("ticket", rec["ticket"] as Int)
+            map.putString("socketUrl", rec["socketUrl"] as String)
+            map.putString("doc", rec["doc"] as String)
+            map.putString("enviroment", rec["enviroment"] as String)
             array.pushMap(map)
         }
 
         promise.resolve(array)
     } catch (e: Exception) {
         promise.reject("DB_ERROR", e.message, e)
+    }
+}
+@ReactMethod
+fun deletePrinterByIdReact(id: Int, promise: Promise) {
+    try {
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        val deleted = dbHelper.deletePrinterById(id)
+        if (deleted) {
+            promise.resolve("✅ Registro eliminado correctamente (id=$id)")
+        } else {
+            promise.resolve("⚠️ No se encontró registro con id=$id")
+        }
+    } catch (e: Exception) {
+        promise.reject("DELETE_ERROR", e.message)
+    }
+}
+@ReactMethod
+fun updatePrinter(
+    id: Int,
+    name: String,
+    model: String,
+    ticket: String,
+    address_ip: String,
+    sockect_url: String,
+    doc: String,
+    enviroment: String,
+    promise: Promise
+) {
+    try {
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        val rowsUpdated = dbHelper.updateRegister(
+            id,
+            name,
+            model,
+            ticket,
+            address_ip,
+            sockect_url,
+            doc,
+            enviroment
+        )
+
+        if (rowsUpdated > 0) {
+            Log.d("PrinterDB", "✅ Registro actualizado correctamente (id=$id)")
+            promise.resolve("Registro actualizado correctamente (id=$id)")
+        } else {
+            Log.w("PrinterDB", "⚠️ No se encontró registro con id=$id para actualizar")
+            promise.resolve("No se encontró registro con id=$id para actualizar")
+        }
+    } catch (e: Exception) {
+        Log.e("PrinterDB", "❌ Error en updatePrinter: ${e.message}", e)
+        promise.reject("UPDATE_ERROR", e.message)
     }
 }
 @ReactMethod
@@ -650,6 +704,36 @@ if (activity == null) {
             promise.reject("SETTINGS_ERROR", e.message, e)
         }
     }
+
+@ReactMethod
+fun savePrinters(
+    model: String,
+    name: String,
+    ticket: String,
+    address_ip: String,
+    socketUrl: String,
+    doc: String,
+    environment: String,
+    promise: Promise
+) {
+    try {
+        val dbHelper = PrinterDatabaseHelper(reactApplicationContext)
+        val exists = dbHelper.existsPrinterByDoc(doc)
+
+        if (!exists) {
+            dbHelper.insertPrinterInfo(model, name, ticket, address_ip, socketUrl, doc, environment)
+            Log.d("PrinterDB", "🆕 Impresora registrada para doc=$doc")
+            promise.resolve("✅ Impresora registrada correctamente (nuevo registro)")
+        } else {
+            Log.d("PrinterDB", "♻️ Impresora ya registrada para doc=$doc, no se inserta")
+            promise.resolve("ℹ️ Impresora ya estaba registrada para este documento")
+        }
+
+    } catch (e: Exception) {
+        Log.e("PrinterDB", "❌ Error guardando impresora: ${e.message}", e)
+        promise.reject("SERVICE_ERROR", e.message)
+    }
+}
 
     // ✅ Mostrar diálogo nativo para encender Bluetooth
 @ReactMethod

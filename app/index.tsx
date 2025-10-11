@@ -4,6 +4,7 @@ import {
   Bluetooth,
   CircleCheck as CheckCircle2,
   Printer,
+  Settings2Icon,
   TrendingUp,
   Wifi,
 } from "lucide-react-native";
@@ -24,7 +25,8 @@ import { Smartphone } from "lucide-react-native";
 import { DeviceEventEmitter } from "react-native";
 
 import { activeTime, formatDate } from "@/constants/date";
-import { useFocusEffect } from "expo-router";
+import { useInfoPrinterStore } from "@/store/info_printer.store";
+import { router, useFocusEffect } from "expo-router";
 import { BLEPrinter, IBLEPrinter } from "react-native-thermal-receipt-printer";
 import { returnDate } from "../constants/date";
 const { BluetoothPrinterModule } = NativeModules;
@@ -50,7 +52,7 @@ export default function home() {
     address_ip: "66:32:64:9A:65:3F",
   });
   const isFocused = useIsFocused();
-
+  const { setInfoPrinter } = useInfoPrinterStore();
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS == "android") {
@@ -59,6 +61,7 @@ export default function home() {
             setActiveBluetooth(true);
             BLEPrinter.init().then(async () => {
               const print = await BLEPrinter.getDeviceList();
+              console.log(print);
               setListPos(print);
               ondetailDB();
               checkService();
@@ -111,12 +114,7 @@ export default function home() {
 
   const onStart = async () => {
     try {
-      BluetoothPrinterModule.startBackgroundService(
-        selectPrint.model,
-        selectPrint.name,
-        selectPrint.ticket,
-        selectPrint.address_ip
-      )
+      BluetoothPrinterModule.startBackgroundService()
         .then(() => {
           ToastAndroid.show("Servicio iniciado", ToastAndroid.CENTER);
         })
@@ -226,7 +224,27 @@ export default function home() {
             </Text>
           </View>
         </View>
-
+        <TouchableOpacity
+          onPress={onActiveBluetooth}
+          activeOpacity={0.8}
+          style={{
+            alignSelf: "flex-end",
+            marginRight: 15,
+            alignItems: "center",
+            height: 10,
+            marginBottom: 1,
+            bottom: 25,
+            justifyContent: "flex-start",
+          }}
+        >
+          <Settings2Icon
+            size={25}
+            color="#3B82F6"
+            onPress={() => {
+              router.navigate("/setting");
+            }}
+          />
+        </TouchableOpacity>
         <View style={styles.statsGrid}>
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
@@ -355,10 +373,13 @@ export default function home() {
               <TouchableOpacity
                 style={styles.deviceRow}
                 onPress={() => {
-                  setSelectPrint({
+                  ToastAndroid.show(
+                    "Impresora seleccionada: " + device.device_name,
+                    ToastAndroid.CENTER
+                  );
+                  setInfoPrinter({
                     model: "N/A",
                     name: device.device_name,
-                    ticket: "0",
                     address_ip: device.inner_mac_address,
                   });
                 }}

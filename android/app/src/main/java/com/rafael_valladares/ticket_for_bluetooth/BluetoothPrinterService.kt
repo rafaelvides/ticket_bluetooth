@@ -50,6 +50,9 @@ class BluetoothPrinterService : Service() {
     private var btSocket: BluetoothSocket? = null        // 👈 Bluetooth impresora
 private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var wakeLock: PowerManager.WakeLock? = null
+    private var socketUrlCache: String? = null      // Cache para no leer BD siempre
+private var socketInitialized = false           // Evita reconexiones múltiples
+private var socketPingJob: Job? = null          // Controla el ping en segundo plano
 
     private var socketRed: Socket? = null
     private val SOCKET_URL = "wss://si-ham-api.erpseedcodeone.online/socket"
@@ -267,8 +270,19 @@ override fun onDestroy() {
     try { outputStream?.close() } catch (_: Exception) {}
     try { btSocket?.close() } catch (_: Exception) {}
             try { wakeLock?.release() } catch (_: Exception) {}
-    try { ioSocket?.disconnect() } catch (_: Exception) {}
-
+     try {
+        ioSocket?.off()        // elimina todos los listeners
+        ioSocket?.disconnect()
+        ioSocket?.close()
+        Log.d("PrinterService", "🔻 Socket cerrado correctamente")
+    } catch (e: Exception) {
+        Log.e("PrinterService", "❌ Error cerrando socket: ${e.message}")
+    }
+  try {
+        socketPingJob?.cancel()
+        serviceScope.cancel()
+        wakeLock?.release()
+    } catch (_: Exception) {}
     socketRed?.disconnect()
         socketRed?.close()
 }
@@ -293,38 +307,112 @@ override fun onDestroy() {
 
 
  private fun startSockets() {
-        try {
-            val opts = IO.Options().apply {
-                reconnection = true
-                reconnectionAttempts = Int.MAX_VALUE
-                reconnectionDelay = 2000
-                transports = arrayOf("websocket")
-                query = "transmitterId=52"
-            }
+    try {
+        // 🧩 Evitar múltiples sockets si ya está activo
+        if (socketInitialized && ioSocket?.connected() == true) {
+            Log.d("PrinterService", "⚡ Socket ya activo, no se reinicia")
+            return
+        }
 
-            ioSocket = IO.socket("wss://facturacion-testmt-api.erpseedcodeone.online/sales-gateway", opts)
+        // 🧩 Cargar la URL solo una vez (desde BD o valor por defecto)
+        if (socketUrlCache == null) {
+            val dbHelper = PrinterDatabaseHelper(applicationContext)
+          socketUrlCache = dbHelper.getSocketUrl()
+            Log.d("PrinterService", "🌐 URL cargada desde BD: $socketUrlCache")
+        } else {
+            Log.d("PrinterService", "⚡ Usando URL cacheada: $socketUrlCache")
+        }
 
-            ioSocket?.on(Socket.EVENT_CONNECT) {
-                Log.d("PrinterService", "✅ Socket conectado")
-            }
+        // 🧩 Configurar opciones del socket
+        val opts = IO.Options().apply {
+            reconnection = true
+            reconnectionAttempts = Int.MAX_VALUE
+            reconnectionDelay = 3000
+            transports = arrayOf("websocket")
+            query = "transmitterId=52"
+        }
 
-            ioSocket?.on("response-print-by-bluetooth") { args ->
-                val data = args.firstOrNull() as? JSONObject ?: return@on
-                Log.d("PrinterService", "📩 Ticket recibido: $data")
-                serviceScope.launch {
-                    printTicketOnce(data.toString())
+        // 🧩 Inicializar socket
+        ioSocket = IO.socket(socketUrlCache, opts)
+
+        // ==============================================
+        // 🔹 Eventos de conexión
+        // ==============================================
+        ioSocket?.on(Socket.EVENT_CONNECT) {
+            Log.d("PrinterService", "✅ Socket conectado a $socketUrlCache")
+        }
+
+        ioSocket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
+            Log.e("PrinterService", "❌ Error al conectar Socket: ${args.joinToString()}")
+        }
+
+        ioSocket?.on(Socket.EVENT_DISCONNECT) {
+            Log.w("PrinterService", "⚠️ Socket desconectado, intentando reconectar...")
+            // Reintento controlado (ya tiene reconnection automática, pero reforzamos)
+            serviceScope.launch {
+                delay(5000)
+                if (ioSocket?.connected() == false) {
+                    try {
+                        ioSocket?.connect()
+                    } catch (_: Exception) {}
                 }
             }
+        }
 
-            ioSocket?.on(Socket.EVENT_DISCONNECT) {
-                Log.w("PrinterService", "⚠️ Socket desconectado")
+        // ==============================================
+        // 🔹 Evento personalizado para imprimir tickets
+        // ==============================================
+        ioSocket?.on("response-print-by-bluetooth") { args ->
+            val data = args.firstOrNull() as? JSONObject ?: return@on
+            Log.d("PrinterService", "📩 Ticket recibido: $data")
+
+            serviceScope.launch {
+                try {
+                    printTicketOnce(data.toString())
+                } catch (e: Exception) {
+                    Log.e("PrinterService", "❌ Error al imprimir ticket: ${e.message}")
+                }
             }
+        }
 
-            ioSocket?.connect()
-        } catch (e: URISyntaxException) {
-            Log.e("PrinterService", "URI error", e)
+        // ==============================================
+        // 🔹 Conectar socket
+        // ==============================================
+        ioSocket?.connect()
+        socketInitialized = true
+        Log.d("PrinterService", "🚀 Socket iniciado correctamente")
+
+        // ==============================================
+        // 🔹 Iniciar ping para mantener conexión viva
+        // ==============================================
+        startPingLoop()
+
+    } catch (e: URISyntaxException) {
+        Log.e("PrinterService", "❌ URI error: ${e.message}")
+    } catch (e: Exception) {
+        Log.e("PrinterService", "❌ Error iniciando socket: ${e.message}")
+    }
+}
+
+private fun startPingLoop() {
+    socketPingJob?.cancel() // Evitar duplicados
+    socketPingJob = serviceScope.launch {
+        while (isActive) {
+            delay(60_000) // cada 60 segundos
+            try {
+                if (ioSocket?.connected() == true) {
+                    ioSocket?.emit("ping-service", "active")
+                    Log.d("PrinterService", "📡 Ping enviado para mantener conexión")
+                } else {
+                    Log.w("PrinterService", "⚠️ Socket no conectado, esperando reconexión")
+                }
+            } catch (e: Exception) {
+                Log.e("PrinterService", "❌ Error enviando ping: ${e.message}")
+            }
         }
     }
+}
+
 private suspend fun closeSafe() {
     try { outputStream?.flush() } catch (_: Exception) {}
     try { outputStream?.close() } catch (_: Exception) {}
@@ -719,7 +807,7 @@ private suspend fun printTicketOnce(payload: String) {
 
         val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
         val dte = json.optString("typeDte", "SIN-DTE")
-        val ambiente = "01"
+        val ambiente = json.optString("environment", "01")
         val caja = json.optString("box", "0")
         val fecha = "${json.optString("date")} ${json.optString("time")}"
         val fechaQR = json.optString("date")
