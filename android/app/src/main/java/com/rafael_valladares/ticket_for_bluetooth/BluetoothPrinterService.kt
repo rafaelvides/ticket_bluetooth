@@ -28,6 +28,11 @@ import kotlin.math.max
 import java.nio.charset.Charset
 
 
+import android.Manifest
+import android.os.Build
+import java.util.UUID
+
+
 // ✅ Importa esto arriba del archivo
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -53,7 +58,6 @@ private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var socketUrlCache: String? = null      // Cache para no leer BD siempre
 private var socketInitialized = false           // Evita reconexiones múltiples
 private var socketPingJob: Job? = null          // Controla el ping en segundo plano
-
     private var socketRed: Socket? = null
     private val SOCKET_URL = "wss://si-ham-api.erpseedcodeone.online/socket"
 private var ioSocket: Socket? = null                 // 👈 Socket.IO
@@ -790,7 +794,370 @@ private suspend fun printTicketOnce(payload: String) {
         // 🧾 Construcción del ticket
         // =========================================
         val json = JSONObject(payload)
-        val PAGE_WIDTH = 558
+val environment = printerInfo["enviroment"] as? String ?: "00"
+
+val ticketBytes: ByteArray = if (environment == "00") {
+    // Formato antiguo, pero adaptado para que funcione con la impresora
+    buildTicketNormal(json)
+} else {
+    // Formato moderno, con QR y diseño actualizado
+    buildTicketCPCL(json)
+}            // }
+//         val PAGE_WIDTH = 558
+//         val LEFT_X = 85
+//         val tableBody = StringBuilder()
+//         val OFFSET_X = 10 //mover a la derecha todo el texto entre mas sea mas es el espacio que deja al principio
+//         val TABLE_OFFSET_X = 10  // <- mueve toda la tabla a la derecha
+//         var y = 25
+//         val LINE_H = 28
+
+//         fun calcularNumeroXC(texto: String, paddingRight: Int = 40): Int {
+//     val charWidth = 14
+//     val textWidth = texto.length * charWidth
+//     return PAGE_WIDTH - textWidth - paddingRight
+// }
+
+
+//         val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
+//         val dte = json.optString("typeDte", "SIN-DTE")
+//         val ambiente = json.optString("environment", "01")
+//         val caja = json.optString("box", "0")
+//         val fecha = "${json.optString("date")} ${json.optString("time")}"
+//         val fechaQR = json.optString("date")
+//         val numControl = json.optString("controlNumber", "SIN-CONTROL")
+//         val codGen = json.optString("generationCode", "-")
+//         val cliente = json.optString("customer", "CONSUMIDOR FINAL")
+//         val empleado = json.optString("employeeName", "N/A")
+//         val total = json.optDouble("total", 0.0)
+//         val subTotal = json.optDouble("subTotal", 0.0)
+//         val vuelto = json.optDouble("vuelto", 0.0)
+
+//         val detailsArray = json.getJSONArray("details")
+//         val productos = mutableListOf<Triple<String, String, String>>()
+//         for (i in 0 until detailsArray.length()) {
+//             val item = detailsArray.getJSONObject(i)
+//             val nombre = item.getString("name")
+//             val cantidad = item.getInt("quantity").toString()
+//             val totalUnit = item.getDouble("totalUnit")
+//             productos.add(Triple(nombre, cantidad, String.format("%.2f", totalUnit)))
+//         }
+
+//       val PRODUCT_X = LEFT_X + TABLE_OFFSET_X
+//       val PRODUCT_MAX_WIDTH = 260   // ancho máximo para texto de producto
+// val QTY_X = PRODUCT_X + PRODUCT_MAX_WIDTH + 20  // empieza después del producto
+// val TOTAL_X = QTY_X + 80  
+
+//         val MAX_PROD_CHARS = 17 //cuantos caracteres para el nombre del producto
+//         val ESPACIO_ENTRE_PRODUCTOS = 16
+//         val BORDER_MARGIN_LEFT = 80
+//         val BORDER_MARGIN_RIGHT = -250
+//         val body = StringBuilder()
+
+//         // =========================================
+//         // 🔹 Encabezado
+//         // =========================================
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $empresa\n"); y += 40
+//         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n"); y += 20
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y DTE: $dte\n"); y += LINE_H
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Caja: $caja\n"); y += LINE_H
+//         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Fecha: $fecha\n"); y += LINE_H
+
+//         for (linea in wrapTextCPCL("Cliente: $cliente", 32)) {
+//             body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
+//         }
+//         for (linea in wrapTextCPCL("Empleado: $empleado", 32)) {
+//             body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
+//         }
+//         for (linea in wrapTextCPCL("Num Control DTE: $numControl", 32)) {
+//             body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y $linea\n"); y += LINE_H
+//         }
+
+//         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+//         y += 20
+
+//         // =========================================
+//         // 🔹 Tabla productos
+//         // =========================================
+//     val subtotalTexto = formatMoneda(subTotal)
+//         val totalTexto = formatMoneda(total)
+//         val vueltoTexto = formatMoneda(vuelto)
+//         //nueva tabla 
+//         body.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
+//         body.append("TEXT 7 0 $QTY_X $y Cant\n")
+//         body.append("TEXT 7 0 $TOTAL_X $y Total\n")
+//         y += 42
+//         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+//         y += 17
+
+//       fun wrapColumnCPCL(text: String, maxChars: Int): List<String> {
+//     val lines = mutableListOf<String>()
+//     var start = 0
+//     while (start < text.length) {
+//         val end = minOf(start + maxChars, text.length)
+//         lines.add(text.substring(start, end))
+//         start += maxChars
+//     }
+//     return lines
+// }
+//       for ((nombre, qty, totalU) in productos) {
+//     val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
+//     prodLines.forEachIndexed { idx, line ->
+//         body.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+//     }
+//     body.append("TEXT 7 0 $QTY_X $y $qty\n")
+//     body.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
+//     y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
+// }
+
+//         body.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+//         y += 16
+        
+// body.append(tableBody.toString())
+// body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
+// body.append("TEXT 7 0 ${calcularNumeroXC(subtotalTexto)} $y $subtotalTexto\n")
+// y += LINE_H
+
+// body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Total:\n")
+// body.append("TEXT 7 0 ${calcularNumeroXC(totalTexto)} $y $totalTexto\n")
+// y += LINE_H
+
+// body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
+// body.append("TEXT 7 0 ${calcularNumeroXC(vueltoTexto)} $y $vueltoTexto\n")
+// y += 45
+
+//         //========================================================
+// //         tableBody.append("TEXT 7 0 $PRODUCT_X $y Producto\n")
+// // tableBody.append("TEXT 7 0 $QTY_X $y Cant\n")
+// // tableBody.append("TEXT 7 0 $TOTAL_X $y Total\n")
+// // y += 42
+// // tableBody.append("LINE $BORDER_MARGIN_LEFT $y ${PAGE_WIDTH - BORDER_MARGIN_RIGHT} $y 2\n")
+// // y += 17
+
+// // for ((nombre, qty, totalU) in productos) {
+// //     val prodLines = wrapColumnCPCL(nombre, MAX_PROD_CHARS)
+// //     prodLines.forEachIndexed { idx, line ->
+// //         tableBody.append("TEXT 7 0 $PRODUCT_X ${y + idx * LINE_H} $line\n")
+// //     }
+// //     tableBody.append("TEXT 7 0 $QTY_X $y $qty\n")
+// //     tableBody.append("TEXT 7 0 $TOTAL_X $y $totalU\n")
+// //     y += (prodLines.size * LINE_H) + ESPACIO_ENTRE_PRODUCTOS
+// // }
+// //         //========================================================
+
+// //         // =========================================
+// //         // 🔹 Totales
+// //         // =========================================
+
+
+// //         fun calcularNumeroX(texto: String): Int {
+// //             val longitud = texto.length
+// //             return PAGE_WIDTH - MARGIN_RIGHT - (longitud * CHAR_WIDTH)
+// //         }
+    
+// //         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Subtotal:\n")
+// //         body.append("TEXT 7 0 ${calcularNumeroX(subtotalTexto)} $y $subtotalTexto\n")
+// //         y += LINE_H
+// //         body.append("TEXT 7 0${LEFT_X + OFFSET_X} $y Total:\n")
+// //         body.append("TEXT 7 0 ${calcularNumeroX(totalTexto)} $y $totalTexto\n")
+// //         y += LINE_H
+// //         body.append("TEXT 7 0 ${LEFT_X + OFFSET_X} $y Vuelto:\n")
+// //         body.append("TEXT 7 0 ${calcularNumeroX(vueltoTexto)} $y $vueltoTexto\n")
+// //         y += 45
+
+//         // =========================================
+//         // 🔹 QR
+//         // =========================================
+//         body.append("SETMAG 1\n")
+//         body.append("TONE 3\n")
+//         val qrSize = 205
+//         val qrScale = 5
+//         val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X + 13
+//         body.append("B QR $qrX $y M 2 U $qrScale\n")
+//         body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
+//         body.append("ENDQR\n")
+//         y += (qrSize * (qrScale / 5.0)).toInt() + 25
+
+//         val text1 = "Consulta tu DTE escaneando el QR"
+//         val text2 = "Powered by SeedCodeSV"
+//         body.append("TEXT 7 0 105 $y $text1\n"); y += 25
+//         val text2X = (PAGE_WIDTH / 2) - (text2.length * CHAR_WIDTH / 2)
+//         body.append("TEXT 7 0 $text2X $y $text2\n"); y += 30
+
+//         val pageHeight = y + 20
+//         val cpclCmd = buildString {
+//             append("! 0 200 200 $pageHeight 1\n")
+//             append("PAGE-WIDTH $PAGE_WIDTH\n")
+//             append(body.toString())
+//             append("PRINT\n")
+//         }
+
+        // =========================================
+        // 🔹 Envío a impresora
+        // =========================================
+        localOutput.write(ticketBytes)
+        localOutput.flush()
+        // Esperar envío completo antes de cerrar
+            delay(250)
+
+            // Incrementar ticket
+            val before = printerInfo["ticket"]
+            val after = dbHelper.incrementTicket(printerId)
+            Log.d("PrinterService", "🎫 Ticket antes: $before → después: $after")
+
+            Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
+        // dbHelper.incrementTicket(printerId)
+
+     } catch (e: Exception) {
+            Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
+        } finally {
+            // Cierres seguros
+            try { localOutput?.flush() } catch (_: Exception) {}
+            try { localOutput?.close() } catch (_: Exception) {}
+            try { localSocket?.close() } catch (_: Exception) {}
+            Log.d("PrinterService", "🔻 Socket cerrado correctamente")
+
+            // Liberar wakelock si sigue activo
+            try {
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+            } catch (_: Exception) {}
+        }
+    }}
+
+
+
+// private suspend fun printTicketOnce(payload: String) {
+//     printMutex.withLock {
+//         var localSocket: BluetoothSocket? = null
+//         var localOutput: OutputStream? = null
+
+//         try {
+//             // Mantener CPU despierta por 10 segundos
+//             wakeLock?.acquire(10_000L)
+
+//             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+//                 if (checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+//                     != PackageManager.PERMISSION_GRANTED
+//                 ) {
+//                     Log.e("PrinterService", "🚫 Falta permiso BLUETOOTH_CONNECT")
+//                     return
+//                 }
+//             }
+
+//             val dbHelper = PrinterDatabaseHelper(applicationContext)
+//             val printerInfo = dbHelper.getLastPrinter()
+//                 ?: throw Exception("No hay información de impresora guardada")
+
+//             val address = printerInfo["address_ip"] as? String
+//                 ?: throw Exception("La impresora no tiene dirección registrada")
+//             val printerId = printerInfo["id"] as Int
+
+//             val btAdapter = BluetoothAdapter.getDefaultAdapter()
+//             btAdapter.cancelDiscovery()
+
+//             val device = btAdapter.bondedDevices.firstOrNull { it.address == address }
+//                 ?: throw Exception("Impresora no emparejada")
+
+//             val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+//             suspend fun tryConnectWithRetry(maxRetries: Int = 3): BluetoothSocket {
+//                 var attempt = 0
+//                 var lastError: Exception? = null
+//                 while (attempt < maxRetries) {
+//                     try {
+//                         delay(300)
+//                         btAdapter.cancelDiscovery()
+//                         val tmpSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+//                         tmpSocket.connect()
+//                         Log.d("PrinterService", "✅ Conectado a ${device.name} (intento ${attempt + 1})")
+//                         return tmpSocket
+//                     } catch (e: Exception) {
+//                         Log.w("PrinterService", "⚠️ Falló intento ${attempt + 1}: ${e.message}")
+//                         lastError = e
+//                         try { localSocket?.close() } catch (_: Exception) {}
+//                         delay(800)
+//                     }
+//                     attempt++
+//                 }
+
+//                 Log.w("PrinterService", "🔁 Intentando fallback manual (canal 1)...")
+//                 return try {
+//                     val fallbackSocket = device.javaClass
+//                         .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+//                         .invoke(device, 1) as BluetoothSocket
+//                     fallbackSocket.connect()
+//                     Log.d("PrinterService", "✅ Conectado por fallback canal 1")
+//                     fallbackSocket
+//                 } catch (e2: Exception) {
+//                     throw IOException("❌ No se pudo conectar tras $maxRetries intentos", e2)
+//                 }
+//             }
+
+//             localSocket = tryConnectWithRetry()
+//             delay(200)
+//             localOutput = localSocket.outputStream
+
+//             // =========================================
+//             // 🧾 Construcción del ticket EN FORMATO MARKUP (DantSu-like)
+//             // =========================================
+//             val json = JSONObject(payload)
+
+//             val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
+//             val dte = json.optString("typeDte", "SIN-DTE")
+//             val ambiente = json.optString("environment", "01")
+//             val caja = json.optString("box", "0")
+//             val fecha = "${json.optString("date")} ${json.optString("time")}"
+//             val fechaQR = json.optString("date")
+//             val numControl = json.optString("controlNumber", "SIN-CONTROL")
+//             val codGen = json.optString("generationCode", "-")
+//             val cliente = json.optString("customer", "CONSUMIDOR FINAL")
+//             val empleado = json.optString("employeeName", "N/A")
+//             val total = json.optDouble("total", 0.0)
+//             val subTotal = json.optDouble("subTotal", 0.0)
+//             val vuelto = json.optDouble("vuelto", 0.0)
+
+//             val detailsArray = json.getJSONArray("details")
+//             val productos = mutableListOf<Triple<String, String, String>>()
+//             for (i in 0 until detailsArray.length()) {
+//                 val item = detailsArray.getJSONObject(i)
+//                 val nombre = item.getString("name")
+//                 val cantidad = item.getInt("quantity").toString()
+//                 val totalUnit = item.getDouble("totalUnit")
+//                 productos.add(Triple(nombre, cantidad, String.format("%.2f", totalUnit)))
+//             }
+
+//             fun formatMoneda(value: Double): String = String.format("%.2f", value)
+
+//             val subtotalTexto = formatMoneda(subTotal)
+//             val totalTexto = formatMoneda(total)
+//             val vueltoTexto = formatMoneda(vuelto)
+
+//             val sb = StringBuilder()
+
+// val ticketBytes = buildTicketBytes(json)
+// localOutput.write(ticketBytes)
+//         localOutput.flush()
+
+//         } catch (e: Exception) {
+//             Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
+//         } finally {
+//             try { localOutput?.flush() } catch (_: Exception) {}
+//             try { localOutput?.close() } catch (_: Exception) {}
+//             try { localSocket?.close() } catch (_: Exception) {}
+//             Log.d("PrinterService", "🔻 Socket cerrado correctamente")
+
+//             try {
+//                 if (wakeLock?.isHeld == true) wakeLock?.release()
+//             } catch (_: Exception) {}
+//         }
+//     }
+// }
+
+private fun buildTicketCPCL(json: org.json.JSONObject): ByteArray {
+
+    // ===========================
+    // 🔹 DATOS DEL JSON
+    // ===========================
+ val PAGE_WIDTH = 558
         val LEFT_X = 85
         val tableBody = StringBuilder()
         val OFFSET_X = 10 //mover a la derecha todo el texto entre mas sea mas es el espacio que deja al principio
@@ -807,7 +1174,7 @@ private suspend fun printTicketOnce(payload: String) {
 
         val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
         val dte = json.optString("typeDte", "SIN-DTE")
-        val ambiente = json.optString("environment", "01")
+        val ambiente = json.optString("enviroment", "01")
         val caja = json.optString("box", "0")
         val fecha = "${json.optString("date")} ${json.optString("time")}"
         val fechaQR = json.optString("date")
@@ -958,7 +1325,7 @@ y += 45
         body.append("TONE 3\n")
         val qrSize = 205
         val qrScale = 5
-        val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X + 13
+        val qrX = ((PAGE_WIDTH - qrSize) / 2) + OFFSET_X + 5
         body.append("B QR $qrX $y M 2 U $qrScale\n")
         body.append("MA,https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR\n")
         body.append("ENDQR\n")
@@ -977,38 +1344,138 @@ y += 45
             append(body.toString())
             append("PRINT\n")
         }
+return cpclCmd.toByteArray(Charsets.ISO_8859_1)
 
-        // =========================================
-        // 🔹 Envío a impresora
-        // =========================================
-        localOutput.write(cpclCmd.toByteArray(Charsets.ISO_8859_1))
-        localOutput.flush()
-        // Esperar envío completo antes de cerrar
-            delay(250)
+}
 
-            // Incrementar ticket
-            val before = printerInfo["ticket"]
-            val after = dbHelper.incrementTicket(printerId)
-            Log.d("PrinterService", "🎫 Ticket antes: $before → después: $after")
+private fun buildTicketNormal(json: org.json.JSONObject): ByteArray {
+    val list = mutableListOf<Byte>()
 
-            Log.d("PrinterService", "🖨️ Ticket enviado correctamente")
-        // dbHelper.incrementTicket(printerId)
-
-     } catch (e: Exception) {
-            Log.e("PrinterService", "❌ Error al imprimir: ${e.message}", e)
-        } finally {
-            // Cierres seguros
-            try { localOutput?.flush() } catch (_: Exception) {}
-            try { localOutput?.close() } catch (_: Exception) {}
-            try { localSocket?.close() } catch (_: Exception) {}
-            Log.d("PrinterService", "🔻 Socket cerrado correctamente")
-
-            // Liberar wakelock si sigue activo
-            try {
-                if (wakeLock?.isHeld == true) wakeLock?.release()
-            } catch (_: Exception) {}
+    // ===========================
+    // 🔹 DATOS DEL JSON
+    // ===========================
+    val empresa = json.optString("branchName", "EMPRESA DESCONOCIDA")
+    val dte = json.optString("typeDte", "SIN-DTE")
+    val fecha = "${json.optString("date")} ${json.optString("time")}"
+    val codGen = json.optString("generationCode", "-")
+    val cliente = json.optString("customer", "CONSUMIDOR FINAL")
+    val total = json.optDouble("total", 0.0)
+    val subTotal = json.optDouble("subTotal", 0.0)
+    val vuelto = json.optDouble("vuelto", 0.0)
+    val ambiente = json.optString("enviroment", "01")
+    val fechaQR = json.optString("date")
+    val empleado = json.optString("employeeName", "N/A")
+    val numControl = json.optString("controlNumber", "SIN-CONTROL")
+    val caja = json.optString("box", "0")
+    val productos = mutableListOf<Triple<String, String, String>>()
+    val detailsArray = json.optJSONArray("details")
+    if (detailsArray != null) {
+        for (i in 0 until detailsArray.length()) {
+            val item = detailsArray.getJSONObject(i)
+            val nombre = item.optString("name", "Producto")
+            val cantidad = item.optInt("quantity", 1).toString()
+            val totalUnit = item.optDouble("totalUnit", 0.0)
+            productos.add(Triple(nombre, cantidad, String.format("%.2f", totalUnit)))
         }
-    }}
+    }
+
+    // ===========================
+    // 🔹 ENCABEZADO
+    // ===========================
+    list.addAll(byteArrayOf(0x1B, 0x61, 0x01).toList()) // Centrado
+    list.addAll(byteArrayOf(0x1B, 0x45, 0x01).toList()) // Negrita ON
+    list.addAll("$empresa\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll(byteArrayOf(0x1B, 0x45, 0x00).toList()) // Negrita OFF
+
+    list.addAll(byteArrayOf(0x1B, 0x61, 0x00).toList()) // Alinear izquierda
+    list.addAll("DTE: $dte\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("Caja: $caja\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("Fecha: $fecha\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("Empleado: $empleado\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("Num Control: $numControl\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("Cliente: $cliente\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll("--------------------------------\n".toByteArray(Charsets.UTF_8).toList())
+
+    // ===========================
+    // 🔹 TABLA PRODUCTOS
+    // ===========================
+    // Ajustamos títulos individualmente
+    val col1TitleWidth = 16  // Producto
+    val col2TitleWidth = 6   // Cant (un poquito más a la derecha)
+    val col3TitleWidth = 8   // Total (un poquito más a la izquierda)
+
+    // Datos de las filas
+    val col1DataWidth = 15   // Producto
+    val col2DataWidth = 5
+    val col3DataWidth = 8
+
+    // ---- Títulos ----
+    val headerLine = String.format(
+        "%-${col1TitleWidth}s %${col2TitleWidth + 1}s %${col3TitleWidth - 1}s\n",
+        "Producto", "Cant", "Total"
+    )
+    list.addAll(headerLine.toByteArray(Charsets.UTF_8).toList())
+    list.addAll("--------------------------------\n".toByteArray(Charsets.UTF_8).toList())
+
+    // ---- Filas de productos ----
+    for ((nombre, qty, totalU) in productos) {
+        val nombreAjustado = if (nombre.length > col1DataWidth)
+            nombre.substring(0, col1DataWidth - 1) + "…" else nombre
+
+        val linea = String.format(
+            "%-${col1DataWidth}s %${col2DataWidth}s %${col3DataWidth}s\n",
+            nombreAjustado, qty, totalU
+        )
+        list.addAll(linea.toByteArray(Charsets.UTF_8).toList())
+    }
+
+    list.addAll("--------------------------------\n".toByteArray(Charsets.UTF_8).toList())
+
+    // ===========================
+    // 🔹 TOTALES
+    // ===========================
+    fun rightAlign(label: String, value: String): String {
+        val totalWidth = 32
+        return String.format("%-${totalWidth - value.length}s%s\n", label, value)
+    }
+
+    list.addAll(rightAlign("Subtotal:", String.format("%.2f", subTotal)).toByteArray(Charsets.UTF_8).toList())
+
+    list.addAll(byteArrayOf(0x1B, 0x45, 0x01).toList()) // Negrita ON
+    list.addAll(rightAlign("Total:", String.format("%.2f", total)).toByteArray(Charsets.UTF_8).toList())
+    list.addAll(rightAlign("Vuelto:", String.format("%.2f", vuelto)).toByteArray(Charsets.UTF_8).toList())
+    list.addAll(byteArrayOf(0x1B, 0x45, 0x00).toList()) // Negrita OFF
+    list.addAll(byteArrayOf(0x1B, 0x4A, 20).toList()) // Avanza 20 puntos (~media línea)
+
+    // ===========================
+    // 🔹 ESPACIADO Y CORTE
+    // ===========================
+      list.addAll(byteArrayOf(0x1B, 0x61, 0x01).toList())
+    val qrSize = 6 // tamaño QR
+    val qrData = "https://admin.factura.gob.sv/consultaPublica?ambiente=$ambiente&codGen=$codGen&fechaEmi=$fechaQR"
+
+    // ESC/POS QR Commands (simplificado)
+    list.addAll(byteArrayOf(0x1D, 0x28, 0x6B).toList()) // GS ( k
+    val storeLength = qrData.length + 3
+    list.addAll(byteArrayOf(
+        (storeLength and 0xFF).toByte(),
+        ((storeLength shr 8) and 0xFF).toByte(),
+        0x31, 0x50, 0x30
+    ).toList())
+    list.addAll(qrData.toByteArray(Charsets.UTF_8).toList())
+
+    // Print QR
+    list.addAll(byteArrayOf(0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30).toList())
+    list.addAll(byteArrayOf(0x1B, 0x4A, 20).toList()) // Avanza 20 puntos (~media línea)
+
+    list.addAll("Consulta tu DTE escaneando el QR\n".toByteArray(Charsets.UTF_8).toList())
+list.addAll("Powered by SeedCodeSV\n".toByteArray(Charsets.UTF_8).toList())
+    list.addAll(byteArrayOf(0x1D, 0x56, 0x01).toList()) // Corte total
+
+    return list.toByteArray()
+}
+
+
 
 private fun wrapTextCPCL(text: String, maxChars: Int): List<String> {
     val words = text.split(" ")
